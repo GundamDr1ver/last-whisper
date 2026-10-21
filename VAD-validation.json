@@ -1,0 +1,145 @@
+{
+  "cases" : [
+    {
+      "analysisSeconds" : 0.13681793212890625,
+      "detectedSpeech" : true,
+      "expectedSpeech" : true,
+      "name" : "mixed-language-speech",
+      "peakProbability" : 0.994140625,
+      "segments" : 1
+    },
+    {
+      "analysisSeconds" : 0.024281978607177734,
+      "detectedSpeech" : true,
+      "expectedSpeech" : true,
+      "name" : "quiet-speech",
+      "peakProbability" : 0.9951171875,
+      "segments" : 1
+    },
+    {
+      "analysisSeconds" : 9.3936920166015625e-05,
+      "detectedSpeech" : false,
+      "expectedSpeech" : false,
+      "name" : "silence",
+      "peakProbability" : 0,
+      "segments" : 0
+    },
+    {
+      "analysisSeconds" : 0.0081279277801513672,
+      "detectedSpeech" : false,
+      "expectedSpeech" : false,
+      "name" : "recording-start-only",
+      "peakProbability" : 0.27099609375,
+      "segments" : 0
+    },
+    {
+      "analysisSeconds" : 0.0064198970794677734,
+      "detectedSpeech" : false,
+      "expectedSpeech" : false,
+      "name" : "recording-stop-only",
+      "peakProbability" : 0.40185546875,
+      "segments" : 0
+    },
+    {
+      "analysisSeconds" : 0.025241971015930176,
+      "detectedSpeech" : false,
+      "expectedSpeech" : false,
+      "name" : "keyboard_typing-1-137-A-32.wav",
+      "peakProbability" : 0.205078125,
+      "segments" : 0
+    },
+    {
+      "analysisSeconds" : 0.03399503231048584,
+      "detectedSpeech" : false,
+      "expectedSpeech" : false,
+      "name" : "keyboard_typing-1-53501-A-32.wav",
+      "peakProbability" : 0.05242919921875,
+      "segments" : 0
+    },
+    {
+      "analysisSeconds" : 0.014155983924865723,
+      "detectedSpeech" : false,
+      "expectedSpeech" : false,
+      "name" : "rain-1-17367-A-10.wav",
+      "peakProbability" : 0.0189056396484375,
+      "segments" : 0
+    },
+    {
+      "analysisSeconds" : 0.033288002014160156,
+      "detectedSpeech" : false,
+      "expectedSpeech" : false,
+      "name" : "rain-1-21189-A-10.wav",
+      "peakProbability" : 0.0496826171875,
+      "segments" : 0
+    },
+    {
+      "analysisSeconds" : 0.0093489885330200195,
+      "detectedSpeech" : false,
+      "expectedSpeech" : false,
+      "name" : "rain-1-26222-A-10.wav",
+      "peakProbability" : 0.060211181640625,
+      "segments" : 0
+    },
+    {
+      "analysisSeconds" : 0.010697007179260254,
+      "detectedSpeech" : false,
+      "expectedSpeech" : false,
+      "name" : "rain-1-29561-A-10.wav",
+      "peakProbability" : 0.14501953125,
+      "segments" : 0
+    },
+    {
+      "analysisSeconds" : 0.012198925018310547,
+      "detectedSpeech" : false,
+      "expectedSpeech" : false,
+      "name" : "rain-1-50060-A-10.wav",
+      "peakProbability" : 0.03216552734375,
+      "segments" : 0
+    },
+    {
+      "analysisSeconds" : 0.0012420415878295898,
+      "detectedSpeech" : true,
+      "expectedSpeech" : true,
+      "name" : "speech-short.wav",
+      "peakProbability" : 0.990234375,
+      "segments" : 1
+    },
+    {
+      "analysisSeconds" : 0.011636972427368164,
+      "detectedSpeech" : false,
+      "expectedSpeech" : false,
+      "name" : "wind-1-137296-A-16.wav",
+      "peakProbability" : 0.1807861328125,
+      "segments" : 0
+    },
+    {
+      "analysisSeconds" : 0.010204911231994629,
+      "detectedSpeech" : false,
+      "expectedSpeech" : false,
+      "name" : "wind-1-29532-A-16.wav",
+      "peakProbability" : 0.10687255859375,
+      "segments" : 0
+    },
+    {
+      "analysisSeconds" : 0.011635065078735352,
+      "detectedSpeech" : false,
+      "expectedSpeech" : false,
+      "name" : "quiet-rain",
+      "peakProbability" : 0.07476806640625,
+      "segments" : 0
+    },
+    {
+      "analysisSeconds" : 0.012238979339599609,
+      "detectedSpeech" : true,
+      "expectedSpeech" : true,
+      "name" : "speech-with-rain",
+      "peakProbability" : 0.9951171875,
+      "segments" : 1
+    }
+  ],
+  "model" : "Silero VAD v6",
+  "noAPIRequests" : true,
+  "noiseEntryPointChecks" : 9,
+  "success" : true,
+  "whisperLoadedForNoise" : false
+}

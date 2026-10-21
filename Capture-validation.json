@@ -1,0 +1,12 @@
+{
+  "audioRetained" : false,
+  "firstBufferSeconds" : [
+    0.1894257499370724,
+    0.21000987500883639,
+    0.22302258340641856
+  ],
+  "hardwarePreparationSeconds" : 0.16208696365356445,
+  "microphoneStopped" : true,
+  "noAPIRequests" : true,
+  "success" : true
+}

@@ -1,0 +1,10 @@
+{
+  "decodeSeconds" : 0.66521990299224854,
+  "loadSeconds" : 2.0947829484939575,
+  "mode" : "record-then-transcribe",
+  "model" : "openai_whisper-large-v3-v20240930_turbo",
+  "raw" : "你好,这是语音识别测试,Hello API Test。",
+  "success" : true,
+  "text" : "你好，这是语音识别测试，Hello API Test。",
+  "totalSeconds" : 2.7609959840774536
+}
