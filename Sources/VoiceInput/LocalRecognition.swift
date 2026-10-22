@@ -13,10 +13,15 @@ actor LocalRecognition {
         guard status == AUDIOCPP_OK else { throw Failure("本地识别失败：" + String(cString: audiocpp_last_error())) }
     }
     func prepare(_ choice: LocalModel) throws {
-        if selected == choice, session != nil { return }
+        if selected == choice, session != nil || choice == .whisper { return }
         guard choice.installed else { throw Failure("请先在设置中下载 \(choice.title)。") }
         unload()
         do {
+            if choice == .whisper {
+                guard FileManager.default.isExecutableFile(atPath: WhisperRecognition.executable.path) else { throw Failure("Whisper 识别程序缺失，请重新安装应用。") }
+                selected = choice
+                return
+            }
             try check(audiocpp_registry_create(nil, &registry))
             try choice.family.withCString { family in
                 var config = audiocpp_model_config(family_hint: family, config_id: nil, weight_id: nil, model_spec_override: nil)
@@ -37,6 +42,7 @@ actor LocalRecognition {
     func transcribe(_ samples: [Float], choice: LocalModel) throws -> String {
         try Task.checkCancellation()
         try prepare(choice)
+        if choice == .whisper { return try WhisperRecognition.transcribe(samples, model: choice.url) }
         guard let request = audiocpp_request_create() else { throw Failure("无法创建识别请求。") }
         defer { audiocpp_request_free(request) }
         try samples.withUnsafeBufferPointer { buffer in try check(audiocpp_request_set_audio(request, buffer.baseAddress, buffer.count, 16000, 1)) }

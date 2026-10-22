@@ -321,3 +321,61 @@ final class SettingsAndDownloadTests: XCTestCase {
         XCTAssertThrowsError(try LocalModel.qwen.validate(file))
     }
 }
+
+final class ModelSelectionTests: XCTestCase {
+    func testDefaultAndDownloadCatalog() throws {
+        let name = UUID().uuidString
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: name))
+        defer { defaults.removePersistentDomain(forName: name) }
+        XCTAssertEqual(RecognitionSettings.load(defaults).local, .qwen)
+        XCTAssertEqual(LocalModel.allCases.first, .qwen)
+        XCTAssertTrue(LocalModel.qwen.downloadURL.path.contains("Qwen3-ASR-1.7B-GGUF"))
+        XCTAssertEqual(LocalModel.qwen.bytes, 2_473_017_600)
+        XCTAssertEqual(LocalModel.whisper.file, "ggml-large-v3-turbo-q8_0.bin")
+        XCTAssertEqual(Set(LocalModel.allCases.map(\.file)).count, 3)
+        for model in LocalModel.allCases {
+            XCTAssertEqual(model.sha256.count, 64)
+            XCTAssertEqual(model.downloadURL.scheme, "https")
+        }
+        defaults.set("whisper", forKey: "localModel")
+        XCTAssertEqual(RecognitionSettings.load(defaults).local, .whisper)
+        defaults.set("invalid", forKey: "localModel")
+        XCTAssertEqual(RecognitionSettings.load(defaults).local, .qwen)
+    }
+    @MainActor func testDeleteCustomModelAndPreservePresets() async throws {
+        let draft = SettingsDraft()
+        await draft.load(readKey: { _ in "" })
+        draft.selection = RecognitionSettings()
+        draft.removeCloudModel()
+        XCTAssertEqual(draft.selection.cloudModels, CloudModel.presets)
+        draft.addCloudModel()
+        let first = draft.selection.cloudID
+        draft.addCloudModel()
+        let second = draft.selection.cloudID
+        draft.removeCloudModel()
+        XCTAssertFalse(draft.selection.cloudModels.contains { $0.id == second })
+        XCTAssertTrue(draft.selection.cloudModels.contains { $0.id == first })
+        XCTAssertEqual(draft.selection.cloudID, CloudModel.qwen.id)
+        draft.selection.cloudID = first
+        draft.removeCloudModel()
+        XCTAssertEqual(draft.selection.cloudModels, CloudModel.presets)
+        XCTAssertFalse(draft.canRemoveCloudModel)
+        draft.selection.mode = .local; draft.polish = false
+        let name = UUID().uuidString
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: name))
+        defer { defaults.removePersistentDomain(forName: name) }
+        draft.save(defaults: defaults)
+        XCTAssertEqual(RecognitionSettings.load(defaults).cloudModels, CloudModel.presets)
+        XCTAssertFalse(draft.dirty)
+    }
+    func testWhisperUsesTranscriptionAndAutomaticLanguage() throws {
+        XCTAssertTrue(FileManager.default.isExecutableFile(atPath: WhisperRecognition.executable.path))
+        let file = URL(fileURLWithPath: "/private/tmp/a file")
+        let args = WhisperRecognition.arguments(model: file, audio: file, output: file)
+        XCTAssertTrue(args.contains("auto"))
+        XCTAssertTrue(args.contains("-otxt"))
+        XCTAssertFalse(args.contains("--translate"))
+        XCTAssertFalse(args.contains("-tr"))
+        XCTAssertThrowsError(try WhisperRecognition.transcribe([Float](repeating: 0, count: 16000), model: URL(fileURLWithPath: "/nonexistent-model.bin")))
+    }
+}

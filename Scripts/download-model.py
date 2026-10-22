@@ -2,13 +2,14 @@
 """Download the default model with size/SHA-256 verification. No Python inference runtime."""
 from pathlib import Path
 import hashlib
+import os
 import urllib.request
 
-root = Path(__file__).resolve().parents[1] / 'Models'
-name = 'vibevoice-asr-streaming-1.5b-q8_0.gguf'
-expected_size = 3343199488
-expected_sha = '1a92c0f6c72439d58dedaaff96bb77264802618bd577f58cc0176f47bae5180d'
-url = 'https://huggingface.co/christopherthompson81/VibeVoice-ASR-Streaming-1.5B-GGUF/resolve/main/' + name + '?download=true'
+root = Path(os.environ.get('VOICEINPUT_MODEL_ROOT', Path(__file__).resolve().parents[1] / 'Models'))
+name = 'qwen3-asr-1.7b-q8_0.gguf'
+expected_size = 2473017600
+expected_sha = '3bc2462eca3a3a8f56abcd860d0943ffdc0546547dde55a9d08589607d6f3936'
+url = 'https://huggingface.co/audio-cpp/audio.cpp-gguf/resolve/main/Qwen3-ASR-1.7B-GGUF/' + name + '?download=true'
 
 def validate(path):
     digest = hashlib.sha256()
@@ -26,7 +27,7 @@ if __name__ == '__main__':
         print('Model already verified.', flush=True)
     else:
         temporary = destination.with_suffix('.gguf.partial')
-        print('Downloading VibeVoice-ASR-Streaming 1.5B, 3.34 GB', flush=True)
+        print('Downloading Qwen3-ASR 1.7B Q8, 2.47 GB', flush=True)
         try:
             with urllib.request.urlopen(url, timeout=90) as response, temporary.open('wb') as output:
                 count = 0

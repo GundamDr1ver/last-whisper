@@ -427,7 +427,7 @@ final class DictationModel: ObservableObject {
         let settings = RecognitionSettings.load()
         if settings.mode == .cloud { await LocalRecognition.shared.unload(); return }
         guard settings.local.installed else {
-            if settings.local == .vibevoice, ModelDownloads.shared.messages[.vibevoice] == nil { ModelDownloads.shared.download(.vibevoice) }
+            if settings.local == .qwen, ModelDownloads.shared.messages[.qwen] == nil { ModelDownloads.shared.download(.qwen) }
             message = ModelDownloads.shared.messages[settings.local] ?? "请先完成模型下载。"; return
         }
         do {
@@ -510,7 +510,7 @@ final class DictationModel: ObservableObject {
                 let text = try await RecordingRecognition.transcribe(samples, settings: .init(mode: .local, local: model), key: "")
                 results.append(["model": model.title, "text": text, "seconds": Date().timeIntervalSince(tick)])
             }
-            report["models"] = results; report["success"] = results.count == 2 && results.allSatisfy { !($0["text"] as? String ?? "").isEmpty }
+            report["models"] = results; report["success"] = !results.isEmpty && results.allSatisfy { !($0["text"] as? String ?? "").isEmpty }
         } catch { report["success"] = false; report["error"] = error.localizedDescription }
         let url = URL(fileURLWithPath: ProcessInfo.processInfo.environment["VOICEINPUT_SMOKE_REPORT"] ?? "/private/tmp/voiceinput-recognition-smoke.json")
         if let data = try? JSONSerialization.data(withJSONObject: report, options: [.prettyPrinted, .sortedKeys]) { try? data.write(to: url) }

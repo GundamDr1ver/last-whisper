@@ -22,17 +22,46 @@ struct CloudModel: Identifiable, Codable, Equatable, Sendable {
     }
 }
 enum LocalModel: String, CaseIterable, Codable {
-    case vibevoice, qwen
-    var title: String { self == .vibevoice ? "VibeVoice 1.5B" : "Qwen3-ASR 0.6B" }
-    var detail: String { self == .vibevoice ? "3.34 GB" : "1.15 GB" }
-    var family: String { self == .vibevoice ? "vibevoice_asr_streaming" : "qwen3_asr" }
-    var file: String { self == .vibevoice ? "vibevoice-asr-streaming-1.5b-q8_0.gguf" : "qwen3-asr-0.6b-q8_0.gguf" }
+    case qwen, vibevoice, whisper
+    var title: String {
+        switch self {
+        case .qwen: return "Qwen3-ASR 1.7B · Q8"
+        case .vibevoice: return "VibeVoice 1.5B"
+        case .whisper: return "Whisper Large v3 Turbo · Q8"
+        }
+    }
+    var detail: String {
+        switch self { case .qwen: return "2.47 GB"; case .vibevoice: return "3.34 GB"; case .whisper: return "874 MB" }
+    }
+    var family: String {
+        switch self { case .qwen: return "qwen3_asr"; case .vibevoice: return "vibevoice_asr_streaming"; case .whisper: return "whisper" }
+    }
+    var file: String {
+        switch self {
+        case .qwen: return "qwen3-asr-1.7b-q8_0.gguf"
+        case .vibevoice: return "vibevoice-asr-streaming-1.5b-q8_0.gguf"
+        case .whisper: return "ggml-large-v3-turbo-q8_0.bin"
+        }
+    }
     var downloadURL: URL {
-        let path = self == .vibevoice ? "christopherthompson81/VibeVoice-ASR-Streaming-1.5B-GGUF/resolve/main/" : "audio-cpp/audio.cpp-gguf/resolve/main/Qwen3-ASR-0.6B-GGUF/"
+        let path: String
+        switch self {
+        case .qwen: path = "audio-cpp/audio.cpp-gguf/resolve/main/Qwen3-ASR-1.7B-GGUF/"
+        case .vibevoice: path = "christopherthompson81/VibeVoice-ASR-Streaming-1.5B-GGUF/resolve/main/"
+        case .whisper: path = "ggerganov/whisper.cpp/resolve/main/"
+        }
         return URL(string: "https://huggingface.co/" + path + file + "?download=true")!
     }
-    var bytes: Int64 { self == .vibevoice ? 3_343_199_488 : 1_151_279_968 }
-    var sha256: String { self == .vibevoice ? "1a92c0f6c72439d58dedaaff96bb77264802618bd577f58cc0176f47bae5180d" : "5c53bbb9a6b2ade85c16c290c560658ca18b78a23c323378528f1f945683fcbe" }
+    var bytes: Int64 {
+        switch self { case .qwen: return 2_473_017_600; case .vibevoice: return 3_343_199_488; case .whisper: return 874_188_075 }
+    }
+    var sha256: String {
+        switch self {
+        case .qwen: return "3bc2462eca3a3a8f56abcd860d0943ffdc0546547dde55a9d08589607d6f3936"
+        case .vibevoice: return "1a92c0f6c72439d58dedaaff96bb77264802618bd577f58cc0176f47bae5180d"
+        case .whisper: return "317eb69c11673c9de1e1f0d459b253999804ec71ac4c23c17ecf5fbe24e259a1"
+        }
+    }
     static var root: URL {
         if let path = ProcessInfo.processInfo.environment["VOICEINPUT_MODEL_ROOT"] { return URL(fileURLWithPath: path) }
         let app = Bundle.main.bundleURL
@@ -57,14 +86,14 @@ enum LocalModel: String, CaseIterable, Codable {
 
 struct RecognitionSettings: Equatable, Sendable {
     var mode: RecognitionMode = .local
-    var local: LocalModel = .vibevoice
+    var local: LocalModel = .qwen
     var cloudID = "qwen"
     var cloudModels = CloudModel.presets
     var cloud: CloudModel { cloudModels.first(where: { $0.id == cloudID }) ?? .qwen }
     static func load(_ defaults: UserDefaults = .standard) -> Self {
         var settings = Self()
         settings.mode = RecognitionMode(rawValue: defaults.string(forKey: "recognitionMode") ?? "") ?? .local
-        settings.local = LocalModel(rawValue: defaults.string(forKey: "localModel") ?? "") ?? .vibevoice
+        settings.local = LocalModel(rawValue: defaults.string(forKey: "localModel") ?? "") ?? .qwen
         if let data = defaults.data(forKey: "cloudModels"), let models = try? JSONDecoder().decode([CloudModel].self, from: data), !models.isEmpty {
             settings.cloudModels = models
         }

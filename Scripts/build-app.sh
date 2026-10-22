@@ -2,6 +2,7 @@
 set -euo pipefail
 cd "${0:A:h:h}"
 [[ -f .native/libaudiocpp.dylib ]] || ./Scripts/build-native.sh
+[[ -x .native/whisper-cli ]] || ./Scripts/build-whisper.sh
 BUILD_DIR="${TMPDIR:-/private/tmp}/voiceinput-swift-build"
 export CLANG_MODULE_CACHE_PATH="$BUILD_DIR/clang-cache"
 export SWIFTPM_MODULECACHE_OVERRIDE="$BUILD_DIR/module-cache"
@@ -10,6 +11,9 @@ APP_OUTPUT="$PWD/build/最后的轻语.app"
 APP="$BUILD_DIR/最后的轻语.app"
 mkdir -p "$APP/Contents/MacOS"
 cp "$BUILD_DIR/release/VoiceInput" "$APP/Contents/MacOS/VoiceInput"
+cp .native/whisper-cli "$APP/Contents/MacOS/whisper-cli"
+xattr -c "$APP/Contents/MacOS/whisper-cli"
+codesign --force --sign - "$APP/Contents/MacOS/whisper-cli"
 mkdir -p "$APP/Contents/Frameworks"
 cp -R "$PWD/.native/"*.dylib "$APP/Contents/Frameworks/"
 install_name_tool -delete_rpath "$PWD/.native" "$APP/Contents/MacOS/VoiceInput"
@@ -38,8 +42,8 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
 <key>CFBundleDisplayName</key><string>最后的轻语</string>
 <key>CFBundleIconFile</key><string>AppIcon</string>
 <key>CFBundlePackageType</key><string>APPL</string>
-<key>CFBundleShortVersionString</key><string>0.3.0</string>
-<key>CFBundleVersion</key><string>4</string>
+<key>CFBundleShortVersionString</key><string>0.3.1</string>
+<key>CFBundleVersion</key><string>5</string>
 <key>LSUIElement</key><true/>
 <key>LSMinimumSystemVersion</key><string>15.0</string>
 <key>NSMicrophoneUsageDescription</key><string>录制你的语音并转换为输入文字。</string>

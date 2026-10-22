@@ -1,11 +1,20 @@
 {
-  "bytes": 1048576,
-  "http": 206,
-  "progressCallbacks": 7,
-  "success": true,
   "fullQwenDownload": {
-    "bytes": 1151279968,
-    "sha256": "5c53bbb9a6b2ade85c16c290c560658ca18b78a23c323378528f1f945683fcbe",
+    "file": "qwen3-asr-1.7b-q8_0.gguf",
+    "bytes": 2473017600,
+    "sha256": "3bc2462eca3a3a8f56abcd860d0943ffdc0546547dde55a9d08589607d6f3936",
     "verified": true
-  }
+  },
+  "removedModels": [
+    {
+      "file": "qwen3-asr-0.6b-q8_0.gguf",
+      "bytes": 1151279968
+    },
+    {
+      "file": "vibevoice-asr-streaming-1.5b-q8_0.gguf",
+      "bytes": 3343199488
+    }
+  ],
+  "whisperDownloaded": false,
+  "vibevoiceDownloaded": false
 }

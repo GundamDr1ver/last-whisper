@@ -74,6 +74,12 @@ private actor KeychainWrites {
         let model = CloudModel(id: UUID().uuidString, title: "自定义模型", endpoint: "", model: "")
         selection.cloudModels.append(model); selection.cloudID = model.id
     }
+    var canRemoveCloudModel: Bool { !CloudModel.presets.contains(where: { $0.id == selection.cloudID }) }
+    func removeCloudModel() {
+        guard canRemoveCloudModel else { return }
+        selection.cloudModels.removeAll { $0.id == selection.cloudID }
+        selection.cloudID = selection.cloudModels.first?.id ?? CloudModel.qwen.id
+    }
     func test(polishing: Bool = false) async {
         guard !testing else { return }; testing = true; status = "正在测试…"
         defer { testing = false }
@@ -117,7 +123,7 @@ struct SettingsView: View {
             }
             GroupBox {
                 Group {
-                    if draft.selection.mode == .local { localOptions }
+                    if draft.selection.mode == .local { ScrollView { localOptions }.scrollIndicators(.automatic) }
                     else { cloudOptions }
                 }.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading).padding(8)
             }.frame(height: 200)
@@ -174,6 +180,7 @@ struct SettingsView: View {
                     ForEach(draft.selection.cloudModels) { Text($0.title).tag($0.id) }
                 }
                 Button("添加") { draft.addCloudModel() }
+                if draft.canRemoveCloudModel { Button("删除", role: .destructive) { draft.removeCloudModel() }.disabled(draft.testing) }
             }
             TextField("名称", text: draft.cloudBinding(\.title))
             TextField("接口地址", text: draft.cloudBinding(\.endpoint))
