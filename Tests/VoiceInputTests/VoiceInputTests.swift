@@ -119,6 +119,8 @@ final class VoiceInputTests: XCTestCase {
             }
             let json = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
             let messages = try XCTUnwrap(json["messages"] as? [[String: String]])
+            XCTAssertEqual(messages.map { $0["role"] }, ["system", "user"])
+            XCTAssertEqual(messages.first?["content"], RemoteAPI.polishInstructions)
             XCTAssertEqual(messages.last?["content"], "明天 review PR")
             XCTAssertFalse(String(data: body, encoding: .utf8)!.contains("input_audio"))
             XCTAssertEqual(json["model"] as? String, "configured-model")
@@ -137,7 +139,7 @@ final class VoiceInputTests: XCTestCase {
             let messages = try XCTUnwrap(json["messages"] as? [[String: String]])
             XCTAssertEqual(messages.last?["content"], "先测试 API，再测试识别")
             XCTAssertTrue(messages.first?["content"]?.contains("编号") == true)
-            XCTAssertTrue(messages.first?["content"]?.contains("不强行列表") == true)
+            XCTAssertTrue(messages.first?["content"]?.contains("普通聊天和短句使用自然段") == true)
         }
     }
     func testPolishingRejectsEnglishTranslationAndAllowsEnglishEditing() throws {
