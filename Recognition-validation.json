@@ -1,0 +1,18 @@
+{
+  "models" : [
+    {
+      "model" : "VibeVoice 1.5B",
+      "seconds" : 11.530583024024963,
+      "text" : "你好，这是语音识别测试， Hello, API test."
+    },
+    {
+      "model" : "Qwen3-ASR 0.6B",
+      "seconds" : 3.2512599229812622,
+      "text" : "你好，这是语音识别测试。Hello, a t i test."
+    }
+  ],
+  "noAPIRequests" : true,
+  "noMicrophone" : true,
+  "noTextInjection" : true,
+  "success" : true
+}

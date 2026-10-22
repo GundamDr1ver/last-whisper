@@ -20,15 +20,15 @@ private actor KeychainWrites {
     init(writeKey: @escaping @Sendable (String, String) -> Bool = { Keychain.save($0, account: $1) }) { self.writeKey = writeKey }
     private var keyTasks: [String: Task<Void, Never>] = [:]
     private var loading = false
-    var fingerprint: [String] { [selection.mode.rawValue, selection.local.rawValue, selection.provider.rawValue, String(polish), polishURL, polishModel] }
-    var dirty: Bool { fingerprint != savedFingerprint }
+    var fingerprint: [String] { [selection.mode.rawValue, selection.local.rawValue, selection.cloudID, String(polish), polishURL, polishModel] + selection.cloudModels.flatMap { [$0.id, $0.title, $0.endpoint, $0.model] } }
+    var dirty: Bool { loading && fingerprint != savedFingerprint }
     func load(readKey: @escaping @Sendable (String) -> String = { Keychain.read(account: $0) }) async {
         guard !loading else { return }; loading = true
         selection = .load()
         let config = APIConfiguration.load(keyProvider: { "" })
         polish = config.polish; polishURL = config.polishBaseURL; polishModel = config.polishModel
         savedFingerprint = fingerprint
-        for account in ["polish-key"] + CloudProvider.allCases.map(\.keyAccount) {
+        for account in ["polish-key"] + selection.cloudModels.map(\.keyAccount) {
             let value = await Task.detached { readKey(account) }.value
             if keys[account] == nil { keys[account] = value }
         }
@@ -50,38 +50,46 @@ private actor KeychainWrites {
             self.status = ok ? "密钥已自动保存。" : "密钥保存失败，请允许系统钥匙串访问后重新输入。"
         }
     }
-    func save() {
-        if selection.mode == .cloud, (keys[selection.provider.keyAccount] ?? "").isEmpty { status = "请先填写所选服务商的密钥。"; return }
-        if selection.mode == .local, polish {
+    func save(defaults: UserDefaults = .standard) {
+        if selection.mode == .cloud, (keys[selection.cloud.keyAccount] ?? "").isEmpty { status = "请先填写所选服务商的密钥。"; return }
+        if selection.mode == .cloud {
+            do { _ = try selection.cloud.validatedURL() } catch { status = error.localizedDescription; return }
+        }
+        if polish {
             guard !polishModel.isEmpty, !(keys["polish-key"] ?? "").isEmpty else { status = "请填写润色模型和密钥。"; return }
             do { _ = try APIConfiguration(polishBaseURL: polishURL, polishKey: "", polishModel: polishModel, polish: true).request("/chat/completions") }
             catch { status = error.localizedDescription; return }
         }
-        let defaults = UserDefaults.standard
         defaults.set(polish, forKey: "batchPolishEnabled"); defaults.set(polishURL, forKey: "polishBaseURL"); defaults.set(polishModel, forKey: "polishModel")
-        selection.save()
+        selection.save(defaults)
         savedFingerprint = fingerprint; status = "设置已保存，下次录音生效。"
     }
-    func test() async {
+    func cloudBinding(_ field: WritableKeyPath<CloudModel, String>) -> Binding<String> {
+        Binding(get: { self.selection.cloud[keyPath: field] }, set: { value in
+            guard let index = self.selection.cloudModels.firstIndex(where: { $0.id == self.selection.cloudID }) else { return }
+            self.selection.cloudModels[index][keyPath: field] = value
+        })
+    }
+    func addCloudModel() {
+        let model = CloudModel(id: UUID().uuidString, title: "自定义模型", endpoint: "", model: "")
+        selection.cloudModels.append(model); selection.cloudID = model.id
+    }
+    func test(polishing: Bool = false) async {
         guard !testing else { return }; testing = true; status = "正在测试…"
         defer { testing = false }
         do {
-            if selection.mode == .local {
+            let output: String
+            if polishing {
                 let config = APIConfiguration(polishBaseURL: polishURL, polishKey: keys["polish-key"] ?? "", polishModel: polishModel, polish: polish)
-                let output = try await RemoteAPI.polish("请明天 review 这个 PR，然后确认 API。", config: config)
-                status = "API 通过：" + String(output.prefix(110))
+                output = try await RemoteAPI.polish("请明天 review 这个 PR，然后确认 API。", config: config)
             } else {
                 guard let file = Bundle.module.url(forResource: "api-test", withExtension: "wav", subdirectory: "Resources") else { throw Failure("测试音频缺失。") }
-                let samples = try AudioSamples.load(file)
-                let provider = selection.provider; let key = keys[provider.keyAccount] ?? ""
-                let qwen = QwenStreaming(update: { _ in }); let mimo = MiMoStreaming(key: key, update: { _ in })
-                do {
-                    if provider == .qwen { try await qwen.start(key: key); try await qwen.push(samples); status = "API 通过：" + String(try await qwen.finish().prefix(110)) }
-                    else { try await mimo.push(samples); status = "API 通过：" + String(try await mimo.finish().prefix(110)) }
-                } catch { await qwen.cancel(); await mimo.cancel(); throw error }
+                output = try await CloudRecognition.transcribe(AudioSamples.load(file), model: selection.cloud, key: keys[selection.cloud.keyAccount] ?? "")
             }
+            status = "API 通过：" + String(output.prefix(110))
         } catch { status = "测试失败：" + error.localizedDescription }
     }
+
 }
 
 struct SettingsView: View {
@@ -93,9 +101,9 @@ struct SettingsView: View {
         _draft = StateObject(wrappedValue: draft ?? SettingsDraft()); self.preview = preview
     }
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 10) {
             Text("最后的轻语设置").font(.title2.bold())
-            Text("F13 开始／停止。讲话时显示字幕，停止后一次性输入。").font(.caption).foregroundStyle(.secondary)
+            Text("按 F13 开始，再按一次停止并输入。").font(.caption).foregroundStyle(.secondary)
             HStack {
                 Label(trusted ? "自动输入权限已授权" : "请授予自动输入权限", systemImage: trusted ? "checkmark.shield" : "exclamationmark.shield")
                 Spacer()
@@ -112,14 +120,22 @@ struct SettingsView: View {
                     if draft.selection.mode == .local { localOptions }
                     else { cloudOptions }
                 }.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading).padding(8)
-            }.frame(height: 350)
+            }.frame(height: 200)
+            GroupBox("API 润色") {
+                VStack(alignment: .leading, spacing: 10) {
+                    Toggle("启用润色", isOn: $draft.polish)
+                    TextField("接口地址", text: $draft.polishURL)
+                    HStack { TextField("模型名称", text: $draft.polishModel); SecureField("API 密钥", text: draft.keyBinding("polish-key")) }
+                    Button("测试润色 API") { Task { await draft.test(polishing: true) } }.disabled(draft.testing)
+                }.padding(8).frame(maxWidth: .infinity, alignment: .leading)
+            }
+            Text("输入密钥会自动保存/更新至系统钥匙串").font(.caption).foregroundStyle(.secondary)
             HStack {
-                Button("测试 API") { Task { await draft.test() } }.disabled(draft.testing)
                 if draft.testing { ProgressView().controlSize(.small) }
                 Spacer()
                 Button("保存设置") { draft.save() }.buttonStyle(.borderedProminent).disabled(!draft.dirty || draft.testing || !draft.savingKeys.isEmpty).keyboardShortcut(.defaultAction)
             }
-            Text(draft.status.isEmpty ? "输入密钥会自动保存/更新至系统钥匙串" : draft.status)
+            Text(draft.status)
                 .font(.caption).foregroundStyle(draft.status.contains("失败") ? Color.orange : Color.secondary).lineLimit(3).frame(height: 44, alignment: .topLeading)
         }
         .textFieldStyle(.roundedBorder)
@@ -148,33 +164,27 @@ struct SettingsView: View {
                     }
                 }.frame(height: 44)
             }
-            HStack {
-                Text("StreamSpeech").font(.callout)
-                Spacer()
-                Text("研究模型，暂不支持本机中英听写").font(.caption).foregroundStyle(.secondary)
-            }.frame(height: 24)
-            Divider()
-            Toggle("API 润色（默认关闭）", isOn: $draft.polish)
-            TextField("润色服务地址", text: $draft.polishURL)
-            HStack { TextField("润色模型", text: $draft.polishModel); SecureField("润色 API 密钥", text: draft.keyBinding("polish-key")) }
-            Text("本地识别不上传音频。开启润色后，仅将最终文字发送至润色服务。").font(.caption).foregroundStyle(.secondary)
-            Text("输入密钥会自动保存/更新至系统钥匙串").font(.caption).foregroundStyle(.secondary)
+
         }
     }
     private var cloudOptions: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Picker("预设", selection: $draft.selection.provider) {
-                ForEach(CloudProvider.allCases, id: \.self) { Text($0.title).tag($0) }
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Picker("预设", selection: $draft.selection.cloudID) {
+                    ForEach(draft.selection.cloudModels) { Text($0.title).tag($0.id) }
+                }
+                Button("添加") { draft.addCloudModel() }
             }
-            Text(draft.selection.provider.model).font(.caption.monospaced()).foregroundStyle(.secondary)
-            SecureField("API 密钥", text: draft.keyBinding(draft.selection.provider.keyAccount))
-            Text("输入密钥会自动保存/更新至系统钥匙串").font(.caption).foregroundStyle(.secondary)
-            Text(draft.selection.provider == .qwen ? "使用百炼中国内地（北京）区域的 API 密钥。音频实时上传，识别草稿持续更新。" : "MiMo 当前接口接受音频片段，按片段流式返回文字；每段约 4 秒，停顿时提前提交。不会反复上传整段录音。")
-                .font(.callout).foregroundStyle(.secondary)
-            Text("云端模型直接识别音频，不额外调用润色服务。测试会发送固定测试录音，并可能产生费用。").font(.caption).foregroundStyle(.secondary)
-            Spacer()
+            TextField("名称", text: draft.cloudBinding(\.title))
+            TextField("接口地址", text: draft.cloudBinding(\.endpoint))
+            HStack {
+                TextField("模型名称", text: draft.cloudBinding(\.model))
+                SecureField("API 密钥", text: draft.keyBinding(draft.selection.cloud.keyAccount))
+            }
+            Button("测试识别 API") { Task { await draft.test() } }.disabled(draft.testing)
         }
     }
+
 }
 
 struct CircularDownloadProgress: View {

@@ -61,8 +61,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             NSApp.terminate(nil)
             return
         }
-        if ProcessInfo.processInfo.arguments.contains("--stream-smoke") {
-            Task { @MainActor in await model.runStreamSmoke(); NSApp.terminate(nil) }
+        if ProcessInfo.processInfo.arguments.contains("--download-smoke") {
+            Task { await runDownloadSmoke(); NSApp.terminate(nil) }
+            return
+        }
+        if ProcessInfo.processInfo.arguments.contains("--recognition-smoke") {
+            Task { @MainActor in await model.runRecognitionSmoke(); NSApp.terminate(nil) }
             return
         }
         Task { try? await SpeechGate.shared.prepare() }
@@ -75,6 +79,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         observation = model.$phase.receive(on: RunLoop.main).sink { [weak self] phase in
             self?.updatePanel(phase)
         }
+    }
+    private func runDownloadSmoke() async {
+        actor Counter {
+            var count = 0
+            func add() { count += 1 }
+        }
+        let counter = Counter()
+        var report: [String: Any] = [:]
+        do {
+            var components = URLComponents(url: LocalModel.qwen.downloadURL, resolvingAgainstBaseURL: false)!
+            components.queryItems = (components.queryItems ?? []) + [URLQueryItem(name: "probe", value: UUID().uuidString)]
+            var request = URLRequest(url: components.url!, cachePolicy: .reloadIgnoringLocalCacheData)
+            request.setValue("bytes=0-1048575", forHTTPHeaderField: "Range")
+            let (file, response) = try await ModelFileTransfer(expectedBytes: 1048576, update: { _ in Task { await counter.add() } }).download(request)
+            defer { try? FileManager.default.removeItem(at: file) }
+            try await Task.sleep(for: .milliseconds(100))
+            let count = await counter.count
+            let bytes = try file.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
+            report = ["http": (response as? HTTPURLResponse)?.statusCode ?? 0, "progressCallbacks": count, "bytes": bytes, "success": count > 0 && bytes == 1048576]
+        } catch { report = ["success": false, "error": error.localizedDescription] }
+        let url = URL(fileURLWithPath: ProcessInfo.processInfo.environment["VOICEINPUT_DOWNLOAD_REPORT"] ?? "/private/tmp/voiceinput-download-check.json")
+        if let data = try? JSONSerialization.data(withJSONObject: report, options: [.prettyPrinted, .sortedKeys]) { try? data.write(to: url) }
     }
     private func renderSettingsPreview() {
         let directory = ProcessInfo.processInfo.environment["VOICEINPUT_UI_REPORT"] ?? "/private/tmp"
@@ -108,7 +134,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             return
         }
         if panel == nil {
-            let window = SubtitlePanel(contentRect: NSRect(x: 0, y: 0, width: 520, height: 42), styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+            let window = SubtitlePanel(contentRect: NSRect(x: 0, y: 0, width: 86, height: 32), styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
             window.isFloatingPanel = true
             window.level = .floating
             window.hidesOnDeactivate = false
@@ -125,7 +151,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             if let saved, NSScreen.screens.contains(where: { $0.visibleFrame.contains(NSRect(origin: saved.origin, size: window.frame.size)) }) {
                 window.setFrameOrigin(saved.origin)
             } else if let frame = (NSScreen.screens.first(where: { NSMouseInRect(NSEvent.mouseLocation, $0.frame, false) }) ?? NSScreen.main)?.visibleFrame {
-                window.setFrameOrigin(NSPoint(x: frame.midX - 260, y: frame.minY + 70))
+                window.setFrameOrigin(NSPoint(x: frame.midX - 43, y: frame.minY + 70))
             }
         }
         if panel?.isVisible != true {
@@ -135,7 +161,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 if let saved, NSScreen.screens.contains(where: { $0.visibleFrame.contains(NSRect(origin: saved.origin, size: panel.frame.size)) }) {
                     panel.setFrameOrigin(saved.origin)
                 } else if let frame = screen?.visibleFrame {
-                    panel.setFrameOrigin(NSPoint(x: frame.midX - 260, y: frame.minY + 70))
+                    panel.setFrameOrigin(NSPoint(x: frame.midX - 43, y: frame.minY + 70))
                 }
             }
             // Show the preview without taking focus from the destination input field.
@@ -162,7 +188,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if readyToQuit { return .terminateNow }
         model.shutdown()
         Task {
-            await LocalStreaming.shared.unload()
+            await LocalRecognition.shared.unload()
             readyToQuit = true
             sender.terminate(nil)
         }
@@ -313,17 +339,15 @@ final class DictationModel: ObservableObject {
     @Published var phase: Phase = .idle
     @Published var text = ""
     @Published var message = "按 F13 开始，再按一次停止。"
-    @Published var elapsed: Double?
     @Published var needsAttention = false
     @Published var audioLevel: Double = 0
     @Published var timingSummary = ""
-    private var startupSeconds: Double?
     private var preparedEngine: AVAudioEngine?
     private let startCue = RecordingCue.start.sound
     private let stopCue = RecordingCue.stop.sound
     private let delivery = DictationDelivery()
     private var engine: AVAudioEngine?
-    private var capture: StreamingCapture?
+    private var capture: RecordingCapture?
     private var recognitionTask: Task<String, Error>?
     private var polishTask: Task<APIConfiguration, Never>?
     private var settings = RecognitionSettings()
@@ -336,11 +360,10 @@ final class DictationModel: ObservableObject {
     }
     func start() async {
         guard phase == .idle else { return }
-        needsAttention = false; text = ""; elapsed = nil; timingSummary = ""
+        needsAttention = false; text = ""; timingSummary = ""
         message = "正在准备麦克风…"; phase = .preparing
         let requestedAt = ProcessInfo.processInfo.systemUptime
         let id = UUID(); session = id; settings = .load()
-        let selection = settings
         let microphone: Bool
         switch AVCaptureDevice.authorizationStatus(for: .audio) {
         case .authorized: microphone = true
@@ -352,41 +375,35 @@ final class DictationModel: ObservableObject {
             guard AXIsProcessTrusted() else { throw Failure("请先授予辅助功能权限。") }
             guard !IsSecureEventInputEnabled(), let front = NSWorkspace.shared.frontmostApplication,
                   front.processIdentifier != ProcessInfo.processInfo.processIdentifier else { throw Failure("请先点击目标文字框，再按 F13。") }
-            if selection.mode == .local, !selection.local.installed { throw Failure("默认模型仍未下载完成，请在设置中查看进度或重试。") }
-            if selection.mode == .local { polishTask = Task.detached { APIConfiguration.load(includeKeyWhenDisabled: false) } }
+            if settings.mode == .local, !settings.local.installed { throw Failure("请先在设置中完成模型下载。") }
+            polishTask = Task.detached { APIConfiguration.load(includeKeyWhenDisabled: false) }
             let engine = preparedEngine ?? AVAudioEngine(); preparedEngine = engine
             let input = engine.inputNode; let format = input.outputFormat(forBus: 0)
             guard format.sampleRate > 0, format.channelCount > 0 else { throw Failure("没有可用的麦克风。") }
-            let capture = try StreamingCapture(format: format) { [weak self] error in
-                Task { @MainActor [weak self] in
-                    guard let self, self.session == id, self.phase == .recording else { return }
-                    self.failRecording(error)
-                }
-            }
-            self.capture = capture
-            let timing = CaptureStartTiming(requestedAt: requestedAt)
-            recognitionTask = Task { [weak self] in
-                do {
-                    let key = selection.mode == .cloud ? await Task.detached { Keychain.read(account: selection.provider.keyAccount) }.value : ""
-                    if selection.mode == .cloud, key.isEmpty { throw Failure("请在设置中填写所选云端模型的密钥。") }
-                    return try await StreamingRecognition.run(capture.stream, settings: selection, key: key) { [weak self] output in
-                        await self?.receivePreview(output, id: id)
-                    }
-                } catch {
-                    await MainActor.run {
+            let directory = FileManager.default.temporaryDirectory.appendingPathComponent("VoiceInput-" + id.uuidString)
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+            let capture: RecordingCapture
+            do {
+                capture = try RecordingCapture(format: format, url: directory.appendingPathComponent("recording.wav")) { [weak self] error in
+                    Task { @MainActor [weak self] in
                         guard let self, self.session == id, self.phase == .recording else { return }
                         self.failRecording(error)
                     }
-                    throw error
                 }
-            }
+            } catch { try? FileManager.default.removeItem(at: directory); throw error }
+            self.capture = capture
+            let timing = CaptureStartTiming(requestedAt: requestedAt)
             input.installTap(onBus: 0, bufferSize: 1024, format: format) { [weak self] buffer, _ in
                 capture.append(buffer)
                 if let seconds = timing.receiveFirstBuffer() {
                     Task { @MainActor [weak self] in
                         guard let self, self.session == id, self.phase == .recording else { return }
-                        self.startupSeconds = seconds; self.timingSummary = String(format: "开录 %.0f 毫秒", seconds * 1000)
-                        self.stopCue?.stop(); self.startCue?.volume = RecordingCue.playbackVolume; self.startCue?.play()
+                        self.timingSummary = String(format: "开录 %.0f 毫秒", seconds * 1000)
+                        if self.stopCue?.isPlaying == true { self.stopCue?.stop() }; self.startCue?.volume = RecordingCue.playbackVolume; self.startCue?.play()
+                        // Keep the system cue out of the recording; speech begins after the ready tone.
+                        try? await Task.sleep(for: .seconds((self.startCue?.duration ?? 0) + 0.03))
+                        guard self.session == id, self.phase == .recording else { return }
+                        capture.begin()
                     }
                 }
                 if let samples = buffer.floatChannelData?[0] {
@@ -398,10 +415,9 @@ final class DictationModel: ObservableObject {
                 }
             }
             self.engine = engine; engine.prepare(); try engine.start()
-            phase = .recording; message = "正在流式识别 · 再按 F13 停止并输入"
+            phase = .recording; message = "正在录音 · 再按 F13 停止并输入"
         } catch { failRecording(error) }
     }
-    private func receivePreview(_ output: String, id: UUID) { if session == id { text = output } }
     func prepareMicrophoneHardware() {
         guard AVCaptureDevice.authorizationStatus(for: .audio) == .authorized else { return }
         let prepared = AVAudioEngine(); _ = prepared.inputNode.outputFormat(forBus: 0); preparedEngine = prepared
@@ -409,107 +425,95 @@ final class DictationModel: ObservableObject {
     func prepareLocalModel() async {
         guard phase == .idle else { return }
         let settings = RecognitionSettings.load()
-        if settings.mode == .cloud { await LocalStreaming.shared.unload(); return }
+        if settings.mode == .cloud { await LocalRecognition.shared.unload(); return }
         guard settings.local.installed else {
             if settings.local == .vibevoice, ModelDownloads.shared.messages[.vibevoice] == nil { ModelDownloads.shared.download(.vibevoice) }
-            message = ModelDownloads.shared.messages[settings.local] ?? "请等待默认模型下载完成，可在设置中查看进度。"; return
+            message = ModelDownloads.shared.messages[settings.local] ?? "请先完成模型下载。"; return
         }
         do {
-            message = "正在准备 \(settings.local.title)…"
-            try await LocalStreaming.shared.prepare(settings.local)
-            if phase == .idle { message = "\(settings.local.title) 已就绪 · F13 开始" }
+            try await LocalRecognition.shared.prepare(settings.local)
+            if phase == .idle { message = "已就绪 · 按 F13 开始" }
         } catch { if phase == .idle { message = error.localizedDescription; needsAttention = true } }
     }
     func stop() async {
-        guard phase == .recording else { return }
+        guard phase == .recording, let capture else { return }
         phase = .processing
         engine?.stop(); engine?.inputNode.removeTap(onBus: 0); engine = nil
-        capture?.finish()
-        startCue?.stop(); stopCue?.volume = RecordingCue.playbackVolume; stopCue?.play(); audioLevel = 0
+        capture.finish()
+        if startCue?.isPlaying == true { startCue?.stop() }; stopCue?.volume = RecordingCue.playbackVolume; stopCue?.play(); audioLevel = 0
         let id = session; let started = Date(); let choice = settings
-        let task = recognitionTask; let polish = polishTask
+        let polish = polishTask
         let timeout = Task { [weak self] in
-            do { try await Task.sleep(for: .seconds(120)) } catch { return }
+            do { try await Task.sleep(for: .seconds(180)) } catch { return }
             guard let self, self.session == id, self.phase == .processing else { return }
-            self.failRecording(Failure("识别处理超时，已识别的字幕保留，未输入不完整文字。"))
+            self.failRecording(Failure("识别超时，请检查模型或网络后重试。"))
         }
         defer {
             timeout.cancel(); polish?.cancel()
-            if session == id { recognitionTask = nil; polishTask = nil; capture = nil; delivery.end(); phase = .idle }
+            if session == id { recognitionTask = nil; polishTask = nil; cleanup(); delivery.end(); phase = .idle }
         }
         do {
             try delivery.capture()
-            message = "正在完成最后一段…"
-            let raw = try await task?.value ?? ""
+            message = "正在识别…"
+            let task = Task.detached {
+                let samples = try AudioSamples.load(capture.url)
+                let key = choice.mode == .cloud ? Keychain.read(account: choice.cloud.keyAccount) : ""
+                return try await RecordingRecognition.transcribe(samples, settings: choice, key: key)
+            }
+            recognitionTask = task
+            let raw = try await task.value
             guard session == id else { return }
             text = TranscriptCleanup.clean(raw)
             guard !text.isEmpty else { message = "未检测到有效语音，未输入文字。"; return }
             let config = await polish?.value
             var warning: String?
-            if choice.mode == .local, let config, config.polish {
-                message = "正在整理文字…"
+            if let config, config.polish {
+                message = "正在润色…"
                 do { text = try await RemoteAPI.polish(text, config: config) }
-                catch { warning = "润色失败，已使用本地结果：" + error.localizedDescription }
+                catch { warning = "润色失败，已使用识别结果：" + error.localizedDescription }
             }
             guard session == id else { return }
             try await delivery.deliver(text)
-            elapsed = Date().timeIntervalSince(started)
-            timingSummary = String(format: "开录 %.0f 毫秒 · 停止后 %.2f 秒", (startupSeconds ?? 0) * 1000, elapsed ?? 0)
-            message = warning ?? "已输入 · \(choice.mode == .local ? choice.local.title : choice.provider.title)"
+            timingSummary += String(format: " · 处理 %.2f 秒", Date().timeIntervalSince(started))
+            message = warning ?? "已输入"
         } catch {
             guard session == id else { return }
-            recognitionTask?.cancel(); capture?.cancel(); needsAttention = true; message = error.localizedDescription
-            preservePreview()
+            recognitionTask?.cancel(); needsAttention = true; message = error.localizedDescription
+            preserveResult()
         }
     }
-    private func preservePreview() {
-        if !text.isEmpty {
-            NSPasteboard.general.clearContents(); NSPasteboard.general.setString(text, forType: .string)
-            message += " 已识别文字保留在剪贴板。"
-        }
+    private func preserveResult() {
+        if !text.isEmpty { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(text, forType: .string); message += " 识别文字已保留在剪贴板。" }
+    }
+    private func cleanup() {
+        capture?.finish()
+        if let url = capture?.url { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        capture = nil
     }
     private func failRecording(_ error: Error, preserve: Bool = true) {
         session = UUID(); recognitionTask?.cancel(); recognitionTask = nil
-        capture?.cancel(); capture = nil; polishTask?.cancel(); polishTask = nil
+        polishTask?.cancel(); polishTask = nil
         if let engine { engine.stop(); engine.inputNode.removeTap(onBus: 0) }; engine = nil
-        startCue?.stop(); audioLevel = 0; needsAttention = true; message = error.localizedDescription
-        delivery.end(); phase = .idle; if preserve { preservePreview() }
+        startCue?.stop(); cleanup(); audioLevel = 0; needsAttention = true; message = error.localizedDescription
+        delivery.end(); phase = .idle; if preserve { preserveResult() }
     }
     func shutdown() { failRecording(CancellationError(), preserve: false) }
     func requestAccessibility() { _ = AXIsProcessTrustedWithOptions([kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary) }
-    func runStreamSmoke() async {
-        var report: [String: Any] = ["model": LocalModel.vibevoice.title, "noAPIRequests": true, "noTextInjection": true]
+    func runRecognitionSmoke() async {
+        var report: [String: Any] = ["noAPIRequests": true, "noMicrophone": true, "noTextInjection": true]
         do {
             guard let file = Bundle.module.url(forResource: "api-test", withExtension: "wav", subdirectory: "Resources") else { throw Failure("测试音频缺失。") }
             let samples = try AudioSamples.load(file)
-            let token = UUID()
-            let tick = Date(); try await LocalStreaming.shared.start(.vibevoice, token: token)
-            report["loadSeconds"] = Date().timeIntervalSince(tick)
-            var updates: [[String: Any]] = []; var last = ""; let start = Date()
-            for offset in stride(from: 0, to: samples.count, by: 8000) {
-                let text = try await LocalStreaming.shared.push(Array(samples[offset..<min(offset + 8000, samples.count)]), token: token)
-                if text != last { updates.append(["audioSeconds": Double(min(offset + 8000, samples.count)) / 16000, "elapsedSeconds": Date().timeIntervalSince(start), "text": text]); last = text }
+            var results: [[String: Any]] = []
+            for model in LocalModel.allCases where model.installed {
+                let tick = Date()
+                let text = try await RecordingRecognition.transcribe(samples, settings: .init(mode: .local, local: model), key: "")
+                results.append(["model": model.title, "text": text, "seconds": Date().timeIntervalSince(tick)])
             }
-            let final = try await LocalStreaming.shared.finish(token: token)
-            report["updatesBeforeFinish"] = updates; report["text"] = final
-            report["decodeSeconds"] = Date().timeIntervalSince(start); report["audioSeconds"] = Double(samples.count) / 16000
-            let long = samples + Array(repeating: Float(0), count: 8000) + samples + Array(repeating: Float(0), count: 8000) + samples
-            let secondToken = UUID()
-            try await LocalStreaming.shared.start(.vibevoice, token: secondToken)
-            await LocalStreaming.shared.reset(token: token)
-            var longUpdates: [[String: Any]] = []; var previous = ""
-            let longStart = Date()
-            for offset in stride(from: 0, to: long.count, by: 8000) {
-                let preview = try await LocalStreaming.shared.push(Array(long[offset..<min(offset + 8000, long.count)]), token: secondToken)
-                if preview != previous { longUpdates.append(["audioSeconds": Double(min(offset + 8000, long.count)) / 16000, "text": preview]); previous = preview }
-            }
-            let longFinal = try await LocalStreaming.shared.finish(token: secondToken)
-            report["continuousRecording"] = ["audioSeconds": Double(long.count) / 16000, "decodeSeconds": Date().timeIntervalSince(longStart), "updates": longUpdates, "text": longFinal, "staleResetIgnored": true]
-            report["success"] = !updates.isEmpty && !final.isEmpty && longUpdates.count >= 3 && longFinal.contains("API")
+            report["models"] = results; report["success"] = results.count == 2 && results.allSatisfy { !($0["text"] as? String ?? "").isEmpty }
         } catch { report["success"] = false; report["error"] = error.localizedDescription }
-        let url = URL(fileURLWithPath: ProcessInfo.processInfo.environment["VOICEINPUT_SMOKE_REPORT"] ?? "/private/tmp/voiceinput-stream-smoke.json")
+        let url = URL(fileURLWithPath: ProcessInfo.processInfo.environment["VOICEINPUT_SMOKE_REPORT"] ?? "/private/tmp/voiceinput-recognition-smoke.json")
         if let data = try? JSONSerialization.data(withJSONObject: report, options: [.prettyPrinted, .sortedKeys]) { try? data.write(to: url) }
-        print("STREAM_REPORT", url.path)
     }
 }
 
@@ -540,33 +544,31 @@ final class SubtitlePanel: NSPanel {
 struct AudioActivityView: View {
     @ObservedObject var model: DictationModel
     var body: some View {
-        HStack(spacing: 12) {
-            TimelineView(.animation(minimumInterval: 1.0 / 24, paused: model.phase == .idle)) { context in
-                HStack(spacing: 3) {
-                    ForEach(0..<5) { index in
-                        let pulse = (sin(context.date.timeIntervalSinceReferenceDate * 7 + Double(index)) + 1) / 2
-                        Capsule().fill(model.recording ? Color.white : .orange).frame(width: 3, height: 4 + 18 * max(0.1, model.audioLevel) * pulse)
-                    }
-                }.frame(width: 28, height: 24)
-            }
-            ScrollViewReader { proxy in
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 0) {
-                        Text(model.text.isEmpty ? (model.recording ? "正在聆听…" : model.message) : model.text)
-                            .font(.system(size: 15)).foregroundStyle(.white).lineLimit(1).fixedSize()
-                        Color.clear.frame(width: 1, height: 1).id("tail")
-                    }
-                }.onChange(of: model.text) { _, _ in proxy.scrollTo("tail", anchor: .trailing) }
-            }.mask(LinearGradient(stops: [.init(color: .clear, location: 0), .init(color: .black, location: 0.035), .init(color: .black, location: 0.965), .init(color: .clear, location: 1)], startPoint: .leading, endPoint: .trailing))
-        }.padding(.horizontal, 14).frame(width: 520, height: 42).background(.black.opacity(0.55), in: Capsule()).allowsHitTesting(false)
+        TimelineView(.animation(minimumInterval: 1.0 / 24, paused: model.phase == .idle)) { context in
+            HStack(spacing: 4) {
+                ForEach(0..<7) { index in
+                    let pulse = (sin(context.date.timeIntervalSinceReferenceDate * 7 + Double(index)) + 1) / 2
+                    Capsule().fill(model.recording ? Color.white : .orange).frame(width: 4, height: 4 + 18 * max(0.15, model.audioLevel) * pulse)
+                }
+            }.frame(width: 86, height: 32).background(.black.opacity(0.5), in: Capsule())
+        }.allowsHitTesting(false)
     }
 }
 
-/// Kenney CC0 interface sounds, converted to WAV without gain or synthesis.
+/// Play the original macOS dictation cues without resampling or gain enhancement.
 enum RecordingCue: String {
     case start = "recording-start"
     case stop = "recording-stop"
-    static let playbackVolume: Float = 0.55
-    var url: URL? { Bundle.module.url(forResource: rawValue, withExtension: "wav", subdirectory: "Resources") }
-    var sound: NSSound? { url.flatMap { NSSound(contentsOf: $0, byReference: false) } }
+    static let playbackVolume: Float = 0.65
+    var url: URL? {
+        let native = URL(fileURLWithPath: "/System/Library/PrivateFrameworks/AssistantServices.framework/Versions/A/Resources/" + (self == .start ? "dt-begin.caf" : "dt-confirm.caf"))
+        if FileManager.default.fileExists(atPath: native.path) { return native }
+        return Bundle.module.url(forResource: rawValue, withExtension: "wav", subdirectory: "Resources")
+    }
+    var sound: AVAudioPlayer? {
+        guard let url, let player = try? AVAudioPlayer(contentsOf: url) else { return nil }
+        player.volume = Self.playbackVolume
+        player.prepareToPlay()
+        return player
+    }
 }

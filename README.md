@@ -1,45 +1,43 @@
-# 最后的轻语 · 流式听写
+# 最后的轻语
 
-macOS 菜单栏语音输入，SwiftUI + AppKit，Apple Silicon、macOS 15+。F5 映射到 F13 后，轻按开始，再按停止。
+macOS 菜单栏语音输入。按 F13（F5 映射）开始录音，再按一次停止；结束后识别完整录音，再向当前光标位置输入一次。录音时只显示小型音量指示条，不显示实时识别文字。无 Dock 图标、订阅、历史记录或遥测。
 
-## 使用流程
+## 设置
 
-录音时识别结果持续显示在可移动的单行半透明字幕条上；文字变长时跟随末尾。字幕条不获取键盘焦点，不修改目标输入框。停止后收齐最后一段，再向停止时的光标位置粘贴一次。处理中移动光标或切换应用会取消自动粘贴，已识别文字保存在剪贴板。
+“模型选择”可在本地和云端之间切换，窗口尺寸、下面的润色区和保存按钮位置保持固定。本地目前提供 VibeVoice 1.5B 和 Qwen3-ASR 0.6B；模型下载具有进度、校验、取消和重试。新安装默认选择 VibeVoice，后台准备模型。
 
-不显示 Dock 图标。开始和结束保留 212 毫秒 CC0 提示音，播放音量 0.55。设置从菜单栏进入，麦克风与辅助功能权限由 macOS 正常请求；请求权限不会自动打开系统设置。
+云端预设为 Qwen ASR 和 MiMo ASR，直接显示并允许编辑名称、完整接口地址、模型名称和密钥；“添加”可保存多个自定义模型。支持兼容 OpenAI 的音频 chat/completions 接口，以及以 `/audio/transcriptions` 结尾的 multipart 音频转写接口。自定义服务仍需提供对应接口格式。
 
-## 模型选择
+预设地址与模型：
 
-设置中的“模型选择”分为本地模型和云端模型，默认本地 VibeVoice。两种模式使用固定大小的设置区域和窗口。
+| 预设 | 接口地址 | 模型名称 |
+| --- | --- | --- |
+| Qwen ASR | `https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions` | `qwen3-asr-flash` |
+| MiMo ASR | `https://api.xiaomimimo.com/v1/chat/completions` | `mimo-v2.5-asr` |
 
-### 本地
+API 润色是独立设置，适用于本地和云端识别，默认关闭。开启后仅将最终识别文字送入配置的润色服务，整理标点、口水词、段落和列表，保持原意与中英混合语言；失败时保留未润色的识别结果。识别 API 与润色 API 分别测试、分别存储密钥。
 
-- **VibeVoice-ASR-Streaming 1.5B Q8_0（默认）**：约 3.34 GB。来自微软流式模型的社区 GGUF 转换，使用 audio.cpp 与 Apple Metal 运行，保持流式解码状态；按训练时的分块和前瞻配置出字幕，不能保证逐字或 0.5 秒延迟。启动应用自动下载默认模型，开发恢复也可提前运行下载脚本。
-- **Qwen3-ASR 0.6B Q8_0**：约 1.15 GB，按需下载。当前引擎使用约 2 秒窗口的分块流式识别。
-- **StreamSpeech**：研究模型，尚未接入本机中英听写，界面明确显示不可用，不提供虚假下载按钮。
+密钥输入后自动保存到系统钥匙串服务 `local.voiceinput.api`。预设账号继续使用 `asr-qwen`、`asr-mimo`，自定义模型使用各自的 UUID 账号，润色使用 `polish-key`。切换模型会保留各自的密钥；非空新密钥会更新，清空输入框不会删除已存条目。其他配置保存在 UserDefaults；“保存设置”仅在有修改时可用，成功后恢复不可用，下次录音生效。系统首次访问钥匙串仍可能要求用户授权。
 
-下载界面提供环形进度、失败提示、重试与取消。下载完成先校验大小与 SHA-256，成功后才能选择。取消不安装半成品，重试会重新下载。开发版优先使用已有的项目 `Models/`；否则或移出 `build/` 后从 `~/Library/Application Support/VoiceInput/Models` 下载和加载。
+## 录音和输入
 
-本地保留“API 润色”开关，新安装默认关闭。开启时只发送最终识别文字，由原有兼容 chat/completions 的服务整理标点、口水词、段落和列表；保留英语原语言，失败退回本地文字。云端模式不显示、不执行额外润色。
+使用 macOS 自带的 `dt-begin.caf` / `dt-confirm.caf` 原始听写提示音，在本机运行时读取，不复制或分发系统声音；旧系统资源缺失时才使用附带的 CC0 音效。AVAudioPlayer 提前准备，不重采样、不合成、不放大声音。开始音播放结束后才写入录音，停止收音后才播放结束音，避免提示音进入识别音频。请在开始音结束后讲话。
 
-### 云端
+临时录音为私有目录中的 16 kHz 单声道 WAV，结束处理后删除。停止后先进行本地 Silero 人声检测；没有有效人声则不运行识别、也不调用云端或润色 API。本地识别不上传音频，云端识别只在录音结束且存在有效人声时上传一次完整音频。极轻、极短发音可能被过滤，广播人声也可能被识别。
 
-- **Qwen ASR**：`qwen3-asr-flash-realtime`，中国内地（北京）百炼密钥。连接 `wss://dashscope.aliyuncs.com/api-ws/v1/realtime`，16 kHz PCM 流式上传；按 `item_id` 分别维护每句的 `text + stash` 和最终 `transcript`，后一句不会覆盖前一句。停止发送 `session.finish`，等待 `session.finished` 后输入。
-- **MiMo ASR**：`mimo-v2.5-asr`，`https://api.xiaomimimo.com/v1/chat/completions`。官方接口是音频文件输入、SSE 文字输出，当前接法明确标为“分段流式”：大约每 4 秒或停顿后仅提交新的音频片段，录音期间也能更新字幕。它不等同于 Qwen 的双向实时连接；分段可能影响长句上下文。
+输入位置在停止时捕获；处理中移动光标、编辑文本或切换应用会取消自动粘贴，保留已识别文字至剪贴板。不会选中或替换已有文字。原剪贴板在粘贴后恢复，期间用户复制的新内容会保留。首次使用需要麦克风和辅助功能权限；开发临时签名更新可能需要重新授权。
 
-云端模式音频会发送至选定服务商。仅在本地人声门检测到有效语音后建立云端识别连接；持续背景噪声和静音不提交 ASR。极轻、极短发音仍有漏检可能，广播声也可能被视为人声。音频只在内存中处理，没有录音历史。排队超过约 32 秒会明确停止并保留已有字幕，不静默丢失音频。
+“测试识别 API”上传固定中英测试录音；“测试润色 API”发送固定测试文字。测试不会使用麦克风或自动输入文字，会产生服务商费用。
 
-## 设置、密钥与测试
+## 下载排查
 
-MiMo、Qwen 和润色密钥分别存入系统钥匙串服务 `local.voiceinput.api`，账号 `asr-mimo`、`asr-qwen`、`polish-key`。输入后短暂防抖自动保存/更新，切换服务商从各自记录填充；界面常驻“输入密钥会自动保存/更新至系统钥匙串”。密钥不进入 UserDefaults、日志或 Git；macOS 首次访问仍可能要求系统授权。
+千问原链接、1,151,279,968 字节大小和 SHA-256 已经完整下载核对成功。旧下载调用没有触发进度回调，容易一直显示“正在连接”；现改用 URLSessionDownloadTask 的原生下载委托，并在委托返回前接管临时文件。真实网络诊断确认可获得进度更新，结果见 `Download-validation.json`。
 
-普通选项只在有修改时启用“保存设置”，保存成功后恢复不可用，下次录音生效。密钥单独自动保存。清空密钥输入框不会删除现有钥匙串条目，重新输入非空密钥会更新。
+针对临时网络错误、过期下载跳转和服务端限流，最多自动重试三次并重新获取下载跳转；每次忽略旧缓存，避免复用失效响应。HTTP 错误会显示状态码。下载成功后校验大小和 SHA-256，校验通过才安装；取消或失败不安装半成品。模型默认位于 `~/Library/Application Support/VoiceInput/Models`；开发版若已有项目 `Models/` 则优先使用。
 
-“测试 API”使用固定测试文字（本地润色）或固定测试录音（云端识别），显示结果和错误，不使用麦克风、不自动开启润色，会产生服务商费用。
+## 构建与检查
 
-## 构建与恢复
-
-需要 Xcode 工具链、CMake 3.20+、Git；提前下载模型的脚本需要 Python 3，但运行应用不依赖 Python。
+需要 Apple Silicon、macOS 15+、Xcode 工具链、CMake 3.20+ 和 Git。应用运行不需要 Python；预先下载默认模型的脚本需要 Python 3。
 
 ```sh
 git clone https://github.com/GundamDr1ver/last-whisper.git
@@ -51,18 +49,6 @@ swift test
 open 'build/最后的轻语.app'
 ```
 
-`build-native.sh` 固定 audio.cpp 提交，仅编译相关 ASR 模型及 Metal 后端，产物位于忽略的 `.native/`。应用包含原生动态库；大型模型不提交 GitHub。临时签名更新后可能需要重新授予辅助功能权限。
+本地引擎复用已固定版本的 audio.cpp，通过 Apple Metal 识别；来源、实际模型文件和许可见 `AUDIOCPP-NOTICE.md`。模型及原生构建产物不提交至 Git。BetterWispr、Silero 和旧 CC0 备用提示音的来源许可继续保留。
 
-`--stream-smoke` 用附带中英测试录音运行真实默认模型，记录停止前的字幕更新、加载和推理耗时；不使用麦克风、不调用 API、不粘贴文字。可通过 `VOICEINPUT_MODEL_ROOT` 指定模型目录、`VOICEINPUT_SMOKE_REPORT` 指定报告位置。
-
-历史 `Capture-validation.json`、`Whisper-validation.json` 和 `VAD-validation.json` 来自旧版检查，不代表新引擎性能。新的实测另存 `Streaming-validation.json`。真实麦克风、不同应用输入框以及付费云端账号仍需实际验证。
-
-## 来源
-
-- [Microsoft VibeVoice](https://github.com/microsoft/VibeVoice) 与 [流式说明](https://github.com/microsoft/VibeVoice/blob/main/docs/vibevoice-asr-streaming.md)
-- [audio.cpp](https://github.com/0xShug0/audio.cpp)，见 `AUDIOCPP-NOTICE.md` 和 `AUDIOCPP-LICENSE.txt`
-- [Qwen 实时识别](https://help.aliyun.com/zh/model-studio/qwen-real-time-speech-recognition)
-- [MiMo ASR 官方说明](https://mimo.mi.com/docs/en-US/quick-start/usage-guide/audio/Speech-Recognition)
-- 既有 BetterWispr、Silero 和 CC0 音效来源及许可继续保留在项目内。
-
-本机正式构建检查：25 项自动测试通过；5.74 秒中英录音在送入约 3.5 秒音频后产生首条字幕，连续 18.23 秒样本产生 6 次更新。纯推理分别约 2.1 秒和 5.1 秒。物理内存峰值约 3.69 GB、最大常驻集约 6.42 GB；这些是文件加速输入测试，不能当作真实麦克风首字延迟，长录音和系统负载还会改变表现。
+`--recognition-smoke` 使用固定中英录音验证已安装本地模型，不使用麦克风、付费 API 或文本输入；结果见 `Recognition-validation.json`。`--download-smoke` 下载千问文件的 1 MB 范围用于验证真实进度回调，不额外下载完整模型。旧版 Whisper、收音延迟等报告为历史检查，不代表当前模型性能。

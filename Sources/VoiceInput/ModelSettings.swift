@@ -6,16 +6,25 @@ enum RecognitionMode: String, CaseIterable, Codable {
     case local, cloud
     var title: String { self == .local ? "本地模型" : "云端模型" }
 }
-enum CloudProvider: String, CaseIterable, Codable {
-    case qwen, mimo
-    var title: String { self == .qwen ? "Qwen ASR · 实时流式" : "MiMo ASR · 分段流式" }
-    var model: String { self == .qwen ? "qwen3-asr-flash-realtime" : "mimo-v2.5-asr" }
-    var keyAccount: String { "asr-" + rawValue }
+struct CloudModel: Identifiable, Codable, Equatable, Sendable {
+    var id: String
+    var title: String
+    var endpoint: String
+    var model: String
+    var keyAccount: String { "asr-" + id }
+    static let qwen = Self(id: "qwen", title: "Qwen ASR", endpoint: "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions", model: "qwen3-asr-flash")
+    static let mimo = Self(id: "mimo", title: "MiMo ASR", endpoint: "https://api.xiaomimimo.com/v1/chat/completions", model: "mimo-v2.5-asr")
+    static var presets: [Self] { [.qwen, .mimo] }
+    func validatedURL() throws -> URL {
+        guard let url = URL(string: endpoint.trimmingCharacters(in: .whitespacesAndNewlines)), url.scheme == "https", let host = url.host, !host.isEmpty,
+              url.user == nil, url.password == nil, url.fragment == nil, url.query == nil, !model.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw Failure("请填写有效的 HTTPS 接口地址和模型名称。") }
+        return url
+    }
 }
 enum LocalModel: String, CaseIterable, Codable {
     case vibevoice, qwen
-    var title: String { self == .vibevoice ? "VibeVoice-ASR-Streaming 1.5B" : "Qwen3-ASR 0.6B" }
-    var detail: String { self == .vibevoice ? "原生流式 · 中英混合 · 3.34 GB" : "分块流式 · 中英混合 · 1.15 GB" }
+    var title: String { self == .vibevoice ? "VibeVoice 1.5B" : "Qwen3-ASR 0.6B" }
+    var detail: String { self == .vibevoice ? "3.34 GB" : "1.15 GB" }
     var family: String { self == .vibevoice ? "vibevoice_asr_streaming" : "qwen3_asr" }
     var file: String { self == .vibevoice ? "vibevoice-asr-streaming-1.5b-q8_0.gguf" : "qwen3-asr-0.6b-q8_0.gguf" }
     var downloadURL: URL {
@@ -49,32 +58,77 @@ enum LocalModel: String, CaseIterable, Codable {
 struct RecognitionSettings: Equatable, Sendable {
     var mode: RecognitionMode = .local
     var local: LocalModel = .vibevoice
-    var provider: CloudProvider = .qwen
+    var cloudID = "qwen"
+    var cloudModels = CloudModel.presets
+    var cloud: CloudModel { cloudModels.first(where: { $0.id == cloudID }) ?? .qwen }
     static func load(_ defaults: UserDefaults = .standard) -> Self {
-        Self(mode: RecognitionMode(rawValue: defaults.string(forKey: "recognitionMode") ?? "") ?? .local,
-             local: LocalModel(rawValue: defaults.string(forKey: "localModel") ?? "") ?? .vibevoice,
-             provider: CloudProvider(rawValue: defaults.string(forKey: "cloudProvider") ?? "") ?? .qwen)
+        var settings = Self()
+        settings.mode = RecognitionMode(rawValue: defaults.string(forKey: "recognitionMode") ?? "") ?? .local
+        settings.local = LocalModel(rawValue: defaults.string(forKey: "localModel") ?? "") ?? .vibevoice
+        if let data = defaults.data(forKey: "cloudModels"), let models = try? JSONDecoder().decode([CloudModel].self, from: data), !models.isEmpty {
+            settings.cloudModels = models
+        }
+        settings.cloudID = defaults.string(forKey: "cloudModelID") ?? defaults.string(forKey: "cloudProvider") ?? "qwen"
+        if !settings.cloudModels.contains(where: { $0.id == settings.cloudID }) { settings.cloudID = settings.cloudModels[0].id }
+        return settings
     }
     func save(_ defaults: UserDefaults = .standard) {
         defaults.set(mode.rawValue, forKey: "recognitionMode")
         defaults.set(local.rawValue, forKey: "localModel")
-        defaults.set(provider.rawValue, forKey: "cloudProvider")
+        defaults.set(cloudID, forKey: "cloudModelID")
+        defaults.set(try? JSONEncoder().encode(cloudModels), forKey: "cloudModels")
         NotificationCenter.default.post(name: .recognitionSettingsChanged, object: nil)
     }
 }
 extension Notification.Name { static let recognitionSettingsChanged = Notification.Name("recognitionSettingsChanged") }
 
-private final class DownloadProgress: NSObject, URLSessionDownloadDelegate, @unchecked Sendable {
-    let update: @Sendable (Double) -> Void
+final class ModelFileTransfer: NSObject, URLSessionDownloadDelegate, @unchecked Sendable {
+    private let lock = NSLock()
+    private var task: URLSessionDownloadTask?
+    private var session: URLSession?
+    private var continuation: CheckedContinuation<(URL, URLResponse), Error>?
+    private var cancelled = false
     private var lastPercent = -1
-    init(_ update: @escaping @Sendable (Double) -> Void) { self.update = update }
-    func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didFinishDownloadingTo location: URL) {}
+    private let expectedBytes: Int64
+    private let update: @Sendable (Double) -> Void
+    init(expectedBytes: Int64, update: @escaping @Sendable (Double) -> Void) { self.expectedBytes = expectedBytes; self.update = update }
+    func download(_ request: URLRequest) async throws -> (URL, URLResponse) {
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                lock.lock()
+                if cancelled { lock.unlock(); continuation.resume(throwing: CancellationError()); return }
+                self.continuation = continuation
+                let configuration = URLSessionConfiguration.ephemeral
+                configuration.timeoutIntervalForResource = 24 * 60 * 60
+                configuration.timeoutIntervalForRequest = 90
+                let session = URLSession(configuration: configuration, delegate: self, delegateQueue: nil)
+                self.session = session
+                let task = session.downloadTask(with: request); self.task = task
+                lock.unlock()
+                task.resume()
+            }
+        } onCancel: { self.cancel() }
+    }
+    func cancel() { lock.lock(); cancelled = true; let task = task; lock.unlock(); task?.cancel() }
     func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didWriteData bytesWritten: Int64, totalBytesWritten: Int64, totalBytesExpectedToWrite: Int64) {
-        if totalBytesExpectedToWrite > 0 {
-            let value = Double(totalBytesWritten) / Double(totalBytesExpectedToWrite)
-            let percent = Int(value * 100)
-            if percent != lastPercent { lastPercent = percent; update(value) }
-        }
+        let value = Double(totalBytesWritten) / Double(max(1, expectedBytes))
+        let percent = Int(value * 100)
+        if percent != lastPercent { lastPercent = percent; update(min(1, value)) }
+    }
+    func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didFinishDownloadingTo location: URL) {
+        let owned = FileManager.default.temporaryDirectory.appendingPathComponent("VoiceInput-download-" + UUID().uuidString)
+        do {
+            guard let response = downloadTask.response else { throw Failure("下载服务器没有返回响应。") }
+            try FileManager.default.moveItem(at: location, to: owned)
+            complete(.success((owned, response)))
+        } catch { try? FileManager.default.removeItem(at: owned); complete(.failure(error)) }
+    }
+    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) { if let error { complete(.failure(error)) } }
+    private func complete(_ result: Result<(URL, URLResponse), Error>) {
+        lock.lock(); let continuation = continuation; self.continuation = nil
+        let session = session; self.session = nil; task = nil; lock.unlock()
+        session?.finishTasksAndInvalidate()
+        continuation?.resume(with: result)
     }
 }
 
@@ -88,22 +142,20 @@ private final class DownloadProgress: NSObject, URLSessionDownloadDelegate, @unc
         guard tasks[model] == nil, !model.installed else { return }
         progress[model] = 0; messages[model] = "正在连接…"
         tasks[model] = Task {
-            let configuration = URLSessionConfiguration.ephemeral
-            configuration.timeoutIntervalForResource = 24 * 60 * 60
-            configuration.timeoutIntervalForRequest = 90
-            let session = URLSession(configuration: configuration)
-            defer { session.invalidateAndCancel(); tasks[model] = nil; progress[model] = nil; revision += 1 }
+            defer { tasks[model] = nil; progress[model] = nil; revision += 1 }
             do {
-                let delegate = DownloadProgress { value in
+                let update: @Sendable (Double) -> Void = { value in
                     Task { @MainActor in
                         guard self.tasks[model] != nil else { return }
                         self.progress[model] = min(0.99, value)
                         self.messages[model] = "下载 \(Int(value * 100))%"
                     }
                 }
-                let (temp, response) = try await session.download(from: model.downloadURL, delegate: delegate)
+                let (temp, response) = try await Self.fetch(model.downloadURL, expectedBytes: model.bytes, update: update)
                 defer { try? FileManager.default.removeItem(at: temp) }
-                guard (response as? HTTPURLResponse)?.statusCode == 200 else { throw Failure("模型服务器未正常响应。") }
+                guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+                    throw Failure("模型下载失败（HTTP \((response as? HTTPURLResponse)?.statusCode ?? 0)），请重试。")
+                }
                 messages[model] = "正在校验完整性…"
                 let validation = Task.detached(priority: .utility) { try model.validate(temp) }
                 try await validation.value
@@ -117,6 +169,27 @@ private final class DownloadProgress: NSObject, URLSessionDownloadDelegate, @unc
                 messages[model] = Task.isCancelled ? "下载已取消" : "下载失败：\(error.localizedDescription)"
             }
         }
+    }
+    nonisolated static func fetch(_ url: URL, expectedBytes: Int64, update: @escaping @Sendable (Double) -> Void) async throws -> (URL, URLResponse) {
+        for attempt in 0..<3 {
+            try Task.checkCancellation()
+            var components = URLComponents(url: url, resolvingAgainstBaseURL: false)!
+            components.queryItems = (components.queryItems ?? []) + [URLQueryItem(name: "request", value: UUID().uuidString)]
+            var request = URLRequest(url: components.url!, cachePolicy: .reloadIgnoringLocalCacheData)
+            request.timeoutInterval = 90
+            do {
+                let result = try await ModelFileTransfer(expectedBytes: expectedBytes, update: update).download(request)
+                let code = (result.1 as? HTTPURLResponse)?.statusCode ?? 0
+                if code == 200 { return result }
+                try? FileManager.default.removeItem(at: result.0)
+                guard [403, 408, 429, 500, 502, 503, 504].contains(code), attempt < 2 else { throw Failure("模型下载失败（HTTP \(code)）。") }
+            } catch {
+                try Task.checkCancellation()
+                guard attempt < 2, (error as? URLError) != nil else { throw error }
+            }
+            try await Task.sleep(for: .seconds(attempt + 1))
+        }
+        throw Failure("模型下载失败，请检查网络后重试。")
     }
     func cancel(_ model: LocalModel) { tasks[model]?.cancel() }
 }
