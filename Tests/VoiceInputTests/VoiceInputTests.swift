@@ -379,3 +379,27 @@ final class ModelSelectionTests: XCTestCase {
         XCTAssertThrowsError(try WhisperRecognition.transcribe([Float](repeating: 0, count: 16000), model: URL(fileURLWithPath: "/nonexistent-model.bin")))
     }
 }
+
+final class BrandingTests: XCTestCase {
+    @MainActor func testMenuIconUsesSuppliedSVGAndAdaptsToMenuBar() throws {
+        let url = try XCTUnwrap(Bundle.module.url(forResource: "MenuBarIcon", withExtension: "svg", subdirectory: "Resources"))
+        let svg = try String(contentsOf: url, encoding: .utf8)
+        XCTAssertTrue(svg.contains("M492.64 96C273.92"))
+        let icon = SpeakeasyBrand.menuIcon
+        XCTAssertTrue(icon.isValid)
+        XCTAssertTrue(icon.isTemplate)
+        XCTAssertEqual(icon.size, NSSize(width: 20, height: 20))
+        let data = try XCTUnwrap(icon.tiffRepresentation)
+        let bitmap = try XCTUnwrap(NSBitmapImageRep(data: data))
+        var visible = false, transparent = false
+        for x in stride(from: 0, to: bitmap.pixelsWide, by: 5) {
+            for y in stride(from: 0, to: bitmap.pixelsHigh, by: 5) {
+                let alpha = bitmap.colorAt(x: x, y: y)?.alphaComponent ?? 0
+                visible = visible || alpha > 0.5
+                transparent = transparent || alpha < 0.1
+            }
+        }
+        XCTAssertTrue(visible)
+        XCTAssertTrue(transparent)
+    }
+}

@@ -22,11 +22,11 @@ struct VoiceInputApp: App {
 struct StatusIcon: View {
     @ObservedObject var model: DictationModel
     var body: some View {
-        Image(nsImage: QingyuBrand.menuIcon)
+        Image(nsImage: SpeakeasyBrand.menuIcon)
             .renderingMode(.template)
             .foregroundStyle(model.recording ? Color.red : Color.primary)
             .opacity(model.busy ? 0.55 : 1)
-            .accessibilityLabel(model.recording ? "最后的轻语：正在录音" : "最后的轻语")
+            .accessibilityLabel(model.recording ? "speakeasy：正在录音" : "speakeasy")
     }
 }
 
@@ -42,7 +42,7 @@ struct StatusMenu: View {
         Button("设置…") { NSApp.activate(ignoringOtherApps: true); openSettings() }.keyboardShortcut(",")
         Button("授权辅助功能…") { model.requestAccessibility() }
         Divider()
-        Button("退出最后的轻语") { NSApp.terminate(nil) }.keyboardShortcut("q")
+        Button("退出 speakeasy") { NSApp.terminate(nil) }.keyboardShortcut("q")
     }
 }
 
@@ -559,7 +559,7 @@ struct AudioActivityView: View {
 enum RecordingCue: String {
     case start = "recording-start"
     case stop = "recording-stop"
-    static let playbackVolume: Float = 0.65
+    static let playbackVolume: Float = 0.75
     var url: URL? {
         let native = URL(fileURLWithPath: "/System/Library/PrivateFrameworks/AssistantServices.framework/Versions/A/Resources/" + (self == .start ? "dt-begin.caf" : "dt-confirm.caf"))
         if FileManager.default.fileExists(atPath: native.path) { return native }

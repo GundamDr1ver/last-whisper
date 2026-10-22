@@ -1,4 +1,4 @@
-# 最后的轻语
+# speakeasy
 
 macOS 菜单栏语音输入。按 F13（F5 映射）开始录音，再按一次停止；结束后识别完整录音，再向当前光标位置输入一次。录音时只显示小型音量指示条，不显示实时识别文字。无 Dock 图标、订阅、历史记录或遥测。
 
@@ -47,7 +47,7 @@ cd last-whisper
 python3 Scripts/download-model.py
 ./Scripts/build-app.sh
 swift test
-open 'build/最后的轻语.app'
+open 'build/speakeasy.app'
 ```
 
 Qwen 和 VibeVoice 复用已固定版本的 audio.cpp，通过 Apple Metal 识别。Whisper 使用固定版本 whisper.cpp v1.8.3 的独立本机程序，避免两套 ggml 符号冲突；自动检测语言且不开启翻译，临时音频仅本机处理并删除。Whisper 在停止录音后载入模型，暂不常驻预热；来源、实际模型文件和许可见 `AUDIOCPP-NOTICE.md`。模型及原生构建产物不提交至 Git。BetterWispr、Silero 和旧 CC0 备用提示音的来源许可继续保留。
