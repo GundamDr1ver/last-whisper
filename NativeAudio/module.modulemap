@@ -1,0 +1,5 @@
+module NativeAudio [system] {
+    header "audiocpp.h"
+    link "audiocpp"
+    export *
+}

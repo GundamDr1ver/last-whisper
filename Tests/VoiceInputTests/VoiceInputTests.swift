@@ -180,3 +180,135 @@ final class VoiceInputTests: XCTestCase {
         XCTAssertEqual(clipboard.pasteboardItems?.first?.data(forType: .html), Data("<b>original</b>".utf8))
     }
 }
+
+final class StreamingTests: XCTestCase {
+    func testDefaultsAndSavedSelectionAreIndependentFromLegacyPolish() throws {
+        let name = "StreamingTests." + UUID().uuidString
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: name))
+        defer { defaults.removePersistentDomain(forName: name) }
+        defaults.set(true, forKey: "batchPolishEnabled")
+        XCTAssertEqual(RecognitionSettings.load(defaults).mode, .local)
+        XCTAssertEqual(RecognitionSettings.load(defaults).local, .vibevoice)
+        let selected = RecognitionSettings(mode: .cloud, local: .qwen, provider: .mimo)
+        selected.save(defaults)
+        XCTAssertEqual(RecognitionSettings.load(defaults), selected)
+        XCTAssertNotEqual(CloudProvider.qwen.keyAccount, CloudProvider.mimo.keyAccount)
+        XCTAssertNotEqual(CloudProvider.mimo.keyAccount, "polish-key")
+    }
+    func testPartialReplacementIsScopedToItemAndLateDraftCannotReplaceFinal() {
+        var transcript = StreamingTranscript()
+        transcript.update(id: "first", text: "第一句。", final: true)
+        transcript.update(id: "second", text: "How", final: false)
+        transcript.update(id: "second", text: "How are you?", final: false)
+        XCTAssertEqual(transcript.text, "第一句。 How are you?")
+        transcript.update(id: "second", text: "How are you? 你好！", final: true)
+        transcript.update(id: "second", text: "How", final: false)
+        transcript.update(id: "first", text: "第一句确认。", final: true)
+        XCTAssertEqual(transcript.text, "第一句确认。 How are you? 你好！")
+        XCTAssertEqual(transcript.order.count, 2)
+    }
+    func testWaveHeaderAndPCMClipping() {
+        let samples: [Float] = [0, 1, -1, .nan, .infinity, 2, -2]
+        let wave = PCM16.wave(samples)
+        XCTAssertEqual(String(decoding: wave.prefix(4), as: UTF8.self), "RIFF")
+        XCTAssertEqual(String(decoding: wave[8..<16], as: UTF8.self), "WAVEfmt ")
+        XCTAssertEqual(wave.count, 44 + samples.count * 2)
+        let encoded = PCM16.encode(samples)
+        XCTAssertEqual(Array(encoded.prefix(6)), [0, 0, 255, 127, 1, 128])
+    }
+    func testMiMoUsesAudioChunksAndSSEWithoutPolishOrLanguageRestriction() throws {
+        let request = try MiMoStreaming.request(samples: [0, 0.1], key: "test-secret")
+        XCTAssertEqual(request.url?.absoluteString, "https://api.xiaomimimo.com/v1/chat/completions")
+        XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer test-secret")
+        let body = try XCTUnwrap(JSONSerialization.jsonObject(with: request.httpBody!) as? [String: Any])
+        XCTAssertEqual(body["model"] as? String, "mimo-v2.5-asr")
+        XCTAssertEqual(body["stream"] as? Bool, true)
+        XCTAssertEqual((body["asr_options"] as? [String: String])?["language"], "auto")
+        let messages = try XCTUnwrap(body["messages"] as? [[String: Any]])
+        XCTAssertEqual(messages.count, 1)
+        XCTAssertEqual(messages[0]["role"] as? String, "user")
+        XCTAssertThrowsError(try MiMoStreaming.request(samples: [0], key: ""))
+    }
+    func testQwenUsesRealtimeEndpointAndIsolatedKey() {
+        let request = QwenStreaming.request(key: "test-qwen-key")
+        XCTAssertEqual(request.url?.scheme, "wss")
+        XCTAssertEqual(request.url?.host, "dashscope.aliyuncs.com")
+        XCTAssertTrue(request.url?.query?.contains("qwen3-asr-flash-realtime") == true)
+        XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer test-qwen-key")
+    }
+    func testAudioConversionProducesHalfSecondChunksAndFinalTail() async throws {
+        let format = try XCTUnwrap(AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 48000, channels: 1, interleaved: false))
+        let capture = try StreamingCapture(format: format)
+        for _ in 0..<12 {
+            let buffer = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 4800))
+            buffer.frameLength = 4800
+            buffer.floatChannelData![0].initialize(repeating: 0.1, count: 4800)
+            capture.append(buffer)
+        }
+        capture.finish()
+        var sizes: [Int] = []
+        for try await chunk in capture.stream { sizes.append(chunk.count) }
+        XCTAssertEqual(sizes.prefix(2), [8000, 8000])
+        XCTAssertGreaterThan(sizes.reduce(0,+), 18800)
+        XCTAssertLessThanOrEqual(sizes.reduce(0,+), 19200)
+    }
+    func testBoundedAudioBufferReportsOverflowInsteadOfSilentlyDroppingSpeech() async throws {
+        let format = try XCTUnwrap(AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 16000, channels: 1, interleaved: false))
+        let capture = try StreamingCapture(format: format)
+        let buffer = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 8000))
+        buffer.frameLength = 8000; buffer.floatChannelData![0].initialize(repeating: 0, count: 8000)
+        for _ in 0..<70 { capture.append(buffer) }
+        do { for try await _ in capture.stream {}; XCTFail("Must fail rather than lose audio") }
+        catch { XCTAssertTrue(error.localizedDescription.contains("跟不上")) }
+    }
+    @MainActor func testSettingsSaveButtonTracksDraftAndReturnsCleanAfterSave() async {
+        let draft = SettingsDraft()
+        await draft.load(readKey: { _ in "" })
+        XCTAssertFalse(draft.dirty)
+        draft.polishModel += "-changed"
+        XCTAssertTrue(draft.dirty)
+        draft.polishModel.removeLast("-changed".count)
+        XCTAssertFalse(draft.dirty)
+    }
+}
+
+private final class FakeCredentials: @unchecked Sendable {
+    private let lock = NSLock()
+    private var saved: [String: String] = [:]
+    func write(_ key: String, account: String) -> Bool { lock.lock(); defer { lock.unlock() }; saved[account] = key; return true }
+    func read(_ account: String) -> String { lock.lock(); defer { lock.unlock() }; return saved[account] ?? "" }
+}
+final class CredentialAndSilenceTests: XCTestCase {
+    @MainActor func testCloudKeySwitchAndUpdateNeverOverwriteAnotherProvider() async throws {
+        let store = FakeCredentials()
+        let draft = SettingsDraft(writeKey: { key, account in store.write(key, account: account) })
+        await draft.load(readKey: { account in account == CloudProvider.mimo.keyAccount ? "existing-mimo" : "" })
+        draft.selection.provider = .mimo
+        XCTAssertEqual(draft.keyBinding(CloudProvider.mimo.keyAccount).wrappedValue, "existing-mimo")
+        draft.editKey("qwen-old", account: CloudProvider.qwen.keyAccount)
+        draft.editKey("qwen-new", account: CloudProvider.qwen.keyAccount)
+        draft.selection.provider = .mimo
+        draft.editKey("mimo-new", account: CloudProvider.mimo.keyAccount)
+        try await Task.sleep(for: .milliseconds(850))
+        XCTAssertEqual(store.read(CloudProvider.qwen.keyAccount), "qwen-new")
+        XCTAssertEqual(store.read(CloudProvider.mimo.keyAccount), "mimo-new")
+        XCTAssertEqual(draft.keys[CloudProvider.qwen.keyAccount], "qwen-new")
+        draft.editKey("", account: CloudProvider.mimo.keyAccount)
+        XCTAssertEqual(store.read(CloudProvider.mimo.keyAccount), "mimo-new")
+        XCTAssertTrue(draft.savingKeys.isEmpty)
+    }
+    func testSilenceAndStartCueDoNotSubmitCloudAudio() async throws {
+        let cue = try XCTUnwrap(RecordingCue.start.url)
+        let cueSamples = try AudioSamples.load(cue)
+        let samples = cueSamples + Array(repeating: Float(0), count: 48000)
+        let stream = AsyncThrowingStream<[Float], Error> { continuation in
+            for offset in stride(from: 0, to: samples.count, by: 8000) {
+                continuation.yield(Array(samples[offset..<min(offset + 8000, samples.count)]))
+            }
+            continuation.finish()
+        }
+        // An empty key makes any attempted API submission fail locally; no network can be used.
+        let text = try await StreamingRecognition.run(stream, settings: .init(mode: .cloud, local: .vibevoice, provider: .mimo), key: "", update: { _ in XCTFail("Noise must not produce a transcript") })
+        XCTAssertEqual(text, "")
+    }
+}

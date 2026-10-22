@@ -1,0 +1,52 @@
+{
+  "audioSeconds": 5.7416875,
+  "continuousRecording": {
+    "audioSeconds": 18.2250625,
+    "decodeSeconds": 5.084910988807678,
+    "staleResetIgnored": true,
+    "text": "你好，这是语音识别测试， Hello, API test. 你好，这是语音识别测试， Hello, API test. 你好，这是语音识别测 试， Hello, API test.",
+    "updates": [
+      {
+        "audioSeconds": 3.5,
+        "text": "你好，这是语音识别测试，"
+      },
+      {
+        "audioSeconds": 6.5,
+        "text": "你好，这是语音识别测试， Hello, API test."
+      },
+      {
+        "audioSeconds": 9.5,
+        "text": "你好，这是语音识别测试， Hello, API test. 你好，这是语音识别测试，"
+      },
+      {
+        "audioSeconds": 12.5,
+        "text": "你好，这是语音识别测试， Hello, API test. 你好，这是语音识别测试， Hello, API"
+      },
+      {
+        "audioSeconds": 15.5,
+        "text": "你好，这是语音识别测试， Hello, API test. 你好，这是语音识别测试， Hello, API test. 你好，这是语音识别测"
+      },
+      {
+        "audioSeconds": 18.2250625,
+        "text": "你好，这是语音识别测试， Hello, API test. 你好，这是语音识别测试， Hello, API test. 你好，这是语音识别测 试， Hello, API"
+      }
+    ]
+  },
+  "decodeSeconds": 1.737104058265686,
+  "loadSeconds": 8.084176063537598,
+  "model": "VibeVoice-ASR-Streaming 1.5B",
+  "noAPIRequests": true,
+  "noTextInjection": true,
+  "success": true,
+  "text": "你好，这是语音识别测试， Hello, API test.",
+  "updatesBeforeFinish": [
+    {
+      "audioSeconds": 3.5,
+      "elapsedSeconds": 0.9466049671173096,
+      "text": "你好，这是语音识别测试，"
+    }
+  ],
+  "peakMemoryFootprintBytes": 3685486408,
+  "maximumResidentSetBytes": 6418530304,
+  "notes": "File input is fed faster than real time. audioSeconds measures how much audio must arrive before a chunk can emit; elapsedSeconds is inference time, not microphone-to-subtitle latency. Measured on Apple M4. No paid/cloud/microphone/editor tests."
+}

@@ -1,6 +1,7 @@
 #!/bin/zsh
 set -euo pipefail
 cd "${0:A:h:h}"
+[[ -f .native/libaudiocpp.dylib ]] || ./Scripts/build-native.sh
 BUILD_DIR="${TMPDIR:-/private/tmp}/voiceinput-swift-build"
 export CLANG_MODULE_CACHE_PATH="$BUILD_DIR/clang-cache"
 export SWIFTPM_MODULECACHE_OVERRIDE="$BUILD_DIR/module-cache"
@@ -9,6 +10,14 @@ APP_OUTPUT="$PWD/build/最后的轻语.app"
 APP="$BUILD_DIR/最后的轻语.app"
 mkdir -p "$APP/Contents/MacOS"
 cp "$BUILD_DIR/release/VoiceInput" "$APP/Contents/MacOS/VoiceInput"
+mkdir -p "$APP/Contents/Frameworks"
+cp -R "$PWD/.native/"*.dylib "$APP/Contents/Frameworks/"
+install_name_tool -delete_rpath "$PWD/.native" "$APP/Contents/MacOS/VoiceInput"
+install_name_tool -add_rpath '@executable_path/../Frameworks' "$APP/Contents/MacOS/VoiceInput"
+for voiceinput_library in "$APP/Contents/Frameworks/"*.dylib; do
+    xattr -c "$voiceinput_library"
+    codesign --force --sign - "$voiceinput_library"
+done
 mkdir -p "$APP/Contents/Resources"
 cp -R "$BUILD_DIR/release/VoiceInput_VoiceInput.bundle" "$APP/Contents/Resources/"
 ICONSET="$BUILD_DIR/AppIcon.iconset"
@@ -29,8 +38,8 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
 <key>CFBundleDisplayName</key><string>最后的轻语</string>
 <key>CFBundleIconFile</key><string>AppIcon</string>
 <key>CFBundlePackageType</key><string>APPL</string>
-<key>CFBundleShortVersionString</key><string>0.1.1</string>
-<key>CFBundleVersion</key><string>2</string>
+<key>CFBundleShortVersionString</key><string>0.2.0</string>
+<key>CFBundleVersion</key><string>3</string>
 <key>LSUIElement</key><true/>
 <key>LSMinimumSystemVersion</key><string>15.0</string>
 <key>NSMicrophoneUsageDescription</key><string>录制你的语音并转换为输入文字。</string>
@@ -50,6 +59,13 @@ done
 plutil -lint "$APP/Contents/Info.plist"
 mkdir -p "$PWD/build"
 ditto --norsrc --noextattr "$APP" "$APP_OUTPUT"
-xattr -cr "$APP_OUTPUT"
-codesign --verify --deep --strict "$APP_OUTPUT"
+voiceinput_output_verified=false
+for voiceinput_attempt in 1 2 3; do
+    xattr -cr "$APP_OUTPUT"
+    if codesign --verify --deep --strict "$APP_OUTPUT"; then
+        voiceinput_output_verified=true
+        break
+    fi
+done
+[[ "$voiceinput_output_verified" == true ]]
 print "已构建：$APP_OUTPUT"

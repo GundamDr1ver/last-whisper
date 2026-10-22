@@ -8,3 +8,4 @@ Models/
 .env.*
 *.partial
 __pycache__/
+.native/
