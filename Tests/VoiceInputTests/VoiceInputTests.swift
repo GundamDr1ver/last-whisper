@@ -383,10 +383,10 @@ final class ModelSelectionTests: XCTestCase {
 }
 
 final class BrandingTests: XCTestCase {
-    @MainActor func testMenuIconUsesSuppliedSVGAndAdaptsToMenuBar() throws {
+    @MainActor func testMenuIconUsesSEMonogramAndAdaptsToMenuBar() throws {
         let url = try XCTUnwrap(Bundle.module.url(forResource: "MenuBarIcon", withExtension: "svg", subdirectory: "Resources"))
         let svg = try String(contentsOf: url, encoding: .utf8)
-        XCTAssertTrue(svg.contains("M492.64 96C273.92"))
+        XCTAssertTrue(svg.contains("speakeasy SE"))
         let icon = SpeakeasyBrand.menuIcon
         XCTAssertTrue(icon.isValid)
         XCTAssertTrue(icon.isTemplate)

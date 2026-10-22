@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <title>speakeasy SE</title>
+  <rect x="48" y="48" width="928" height="928" rx="210" fill="#fff"/>
+  <path d="M464 340H354C290 340 252 374 252 422C252 466 282 490 338 505L392 520C437 533 460 554 460 592C460 645 420 680 354 680H236" fill="none" stroke="#000" stroke-width="88" stroke-linecap="square"/>
+  <path d="M560 296H832L804 384H648V468H788L760 556H648V636H832L804 724H560Z" fill="#000"/>
+</svg>

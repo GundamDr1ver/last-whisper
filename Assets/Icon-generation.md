@@ -1,9 +1,9 @@
-# 应用图标
+# speakeasy SE 图标
 
-使用内置 imagegen 工具，依据用户提供的蓝金羽箭图重绘。
+黑色几何 SE 字形搭配白色圆角底。S 使用连续圆弧，E 使用斜切端点；不依赖字体、位图生成或外部设计工具。
 
-最终提示词：
+- 应用图标矢量源：`Assets/AppIcon.svg`，1024 × 1024，圆角底外透明。
+- 菜单栏矢量源：`Sources/VoiceInput/Resources/MenuBarIcon.svg`，同一 SE 字形，透明底，运行时适配系统深浅色。
+- 使用 `swift Scripts/render-icon.swift` 生成 PNG 图标和菜单栏预览，再运行 `Scripts/build-app.sh` 生成各尺寸 ICNS。
 
-Use case: logo-brand. Asset: final 1024x1024 macOS app icon for 轻语, no text. The attached image is the visual reference to redraw, not a photo to upscale. Recreate its recognizable emblem: two luminous royal-blue rounded lobes forming an abstract B / butterfly wing, thin warm ivory-gold metallic outline, and a slender diagonal gold-and-silver quill/arrow crossing from bottom left to upper right. Preserve the reference's blue/cyan, navy, and gold palette and silhouette. Redraw cleanly with precise elegant curves, crisp edges, restrained enamel depth and soft highlights, legible at Dock sizes. Center the emblem inside a deep navy rounded-square macOS icon tile with generous 13% internal padding. Tile occupies 90% of canvas, actual alpha-transparent outside rounded square, no outer drop shadow. Remove pixelation and messy tiny ornamental details; simplify arrow fletching, do not add other objects. Output one finished icon only, no mockup, no grid, no letters or watermark.
-
-菜单栏图标以 AppKit 原生路径绘制，源文件为 Sources/VoiceInput/Branding.swift。
+资源使用项目内的 SVG 和 macOS AppKit 渲染；没有新增依赖，也没有修改录音、识别或润色逻辑。
