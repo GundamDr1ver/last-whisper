@@ -1,0 +1,21 @@
+{
+  "version": "0.3.5",
+  "testsPassed": 40,
+  "checks": [
+    "System prompt, four examples, escaped transcript/context and provider-specific parameters",
+    "temperature 0.2, max_tokens 2048 and streaming enabled",
+    "Caret prefix limited to 300 characters, invalid UTF-16 boundaries rejected",
+    "Known native application styles; generic browser fallback",
+    "Short safe replies bypass API; ambiguous ASR terms remain eligible for correction",
+    "Empty and filler-only output handling; substantive empty output rejected",
+    "SSE LF/CRLF/CR, multiline data, split UTF-8, heartbeat and usage",
+    "Incomplete streams, truncation, refusal/tool output, malformed JSON and oversized events rejected",
+    "15-second stalled-stream deadline and underlying network cancellation",
+    "Existing model downloads, audio conversion, clipboard and settings regressions"
+  ],
+  "settingsLayoutVisuallyChecked": true,
+  "paidAPIRequestsPerformed": false,
+  "paidAPITestSkipReason": "No saved polishing model name was found in local.voiceinput.mac preferences.",
+  "microphoneOrModelInferenceRetested": false,
+  "partialPolishTextInserted": false
+}

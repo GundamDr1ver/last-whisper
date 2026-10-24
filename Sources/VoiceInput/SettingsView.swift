@@ -130,6 +130,8 @@ struct SettingsView: View {
             GroupBox("API 润色") {
                 VStack(alignment: .leading, spacing: 10) {
                     Toggle("启用润色", isOn: $draft.polish)
+                    Text("启用后发送转写及光标前最多 300 字（可读取时），用于衔接语气和标点。")
+                        .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                     TextField("接口地址", text: $draft.polishURL)
                     HStack { TextField("模型名称", text: $draft.polishModel); SecureField("API 密钥", text: draft.keyBinding("polish-key")) }
                     Button("测试润色 API") { Task { await draft.test(polishing: true) } }.disabled(draft.testing)

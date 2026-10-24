@@ -4,15 +4,19 @@ import AVFoundation
 @testable import VoiceInput
 
 final class StubProtocol: URLProtocol {
+    nonisolated(unsafe) static var contentType = "application/json"
+    nonisolated(unsafe) static var fragmentSize: Int? = nil
     nonisolated(unsafe) static var handler: ((URLRequest) throws -> (Int, Data))?
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
     override func startLoading() {
         do {
             let (code, data) = try Self.handler!(request)
-            let response = HTTPURLResponse(url: request.url!, statusCode: code, httpVersion: nil, headerFields: ["Content-Type": "application/json"])!
+            let response = HTTPURLResponse(url: request.url!, statusCode: code, httpVersion: nil, headerFields: ["Content-Type": Self.contentType])!
             client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
-            client?.urlProtocol(self, didLoad: data)
+            if let size = Self.fragmentSize {
+                for start in stride(from: 0, to: data.count, by: size) { client?.urlProtocol(self, didLoad: data.subdata(in: start..<min(start + size, data.count))) }
+            } else { client?.urlProtocol(self, didLoad: data) }
             client?.urlProtocolDidFinishLoading(self)
         } catch { client?.urlProtocol(self, didFailWithError: error) }
     }
@@ -119,9 +123,9 @@ final class VoiceInputTests: XCTestCase {
             }
             let json = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
             let messages = try XCTUnwrap(json["messages"] as? [[String: String]])
-            XCTAssertEqual(messages.map { $0["role"] }, ["system", "user"])
-            XCTAssertEqual(messages.first?["content"], RemoteAPI.polishInstructions)
-            XCTAssertEqual(messages.last?["content"], "明天 review PR")
+            XCTAssertEqual(messages.map { $0["role"] }, ["system", "user", "assistant", "user", "assistant", "user", "assistant", "user", "assistant", "user"])
+            XCTAssertTrue(messages.first?["content"]?.hasPrefix(RemoteAPI.polishInstructions) == true)
+            XCTAssertEqual(messages.last?["content"], "<transcript>\n明天 review PR\n</transcript>")
             XCTAssertFalse(String(data: body, encoding: .utf8)!.contains("input_audio"))
             XCTAssertEqual(json["model"] as? String, "configured-model")
             return (200, Data(#"{"choices":[{"message":{"content":"明天 review PR。"},"finish_reason":"stop"}]}"#.utf8))
@@ -137,7 +141,7 @@ final class VoiceInputTests: XCTestCase {
             if disables { XCTAssertEqual((json["thinking"] as? [String: String])?["type"], "disabled") }
             else { XCTAssertNil(json["thinking"]) }
             let messages = try XCTUnwrap(json["messages"] as? [[String: String]])
-            XCTAssertEqual(messages.last?["content"], "先测试 API，再测试识别")
+            XCTAssertEqual(messages.last?["content"], "<transcript>\n先测试 API，再测试识别\n</transcript>")
             XCTAssertTrue(messages.first?["content"]?.contains("编号") == true)
             XCTAssertTrue(messages.first?["content"]?.contains("普通聊天和短句使用自然段") == true)
         }
