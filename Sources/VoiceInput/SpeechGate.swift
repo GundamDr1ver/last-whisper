@@ -64,7 +64,7 @@ actor SpeechGate {
             return SpeechDecision(ranges: [], peakProbability: 0)
         }
         try prepare()
-        guard let model else { throw Failure("人声检测尚未就绪，本次不会调用 API。") }
+        guard let model else { throw Failure("人声检测尚未就绪，请稍后重试。") }
         // Fresh zeroed LSTM state for EACH recording, never inherited from previous speech.
         var hidden = try zeroState()
         var cell = try zeroState()

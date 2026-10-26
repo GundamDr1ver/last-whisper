@@ -58,12 +58,31 @@ enum AudioSamples {
 }
 
 enum RecordingRecognition {
-    static func transcribe(_ samples: [Float], settings: RecognitionSettings, key: String, session: URLSession = .shared) async throws -> String {
+    static func transcribe(_ samples: [Float], settings: RecognitionSettings) async throws -> String {
         let decision = try await SpeechGate.shared.analyze(samples)
         guard let first = decision.ranges.first, let last = decision.ranges.last else { return "" }
         let speech = Array(samples[first.lowerBound..<last.upperBound])
         try Task.checkCancellation()
-        if settings.mode == .local { return try await LocalRecognition.shared.transcribe(speech, choice: settings.local) }
-        return try await CloudRecognition.transcribe(speech, model: settings.cloud, key: key, session: session)
+        return try await LocalRecognition.shared.transcribe(speech, choice: settings.local)
+    }
+}
+
+enum PCM16 {
+    static func encode(_ samples: [Float]) -> Data {
+        var result = Data(capacity: samples.count * 2)
+        for sample in samples {
+            var value = Int16(max(-32768, min(32767, Int((sample.isFinite ? sample : 0) * 32767)))).littleEndian
+            withUnsafeBytes(of: &value) { result.append(contentsOf: $0) }
+        }
+        return result
+    }
+    static func wave(_ samples: [Float]) -> Data {
+        let pcm = encode(samples)
+        var data = Data("RIFF".utf8)
+        func number<T: FixedWidthInteger>(_ value: T) { var n = value.littleEndian; withUnsafeBytes(of: &n) { data.append(contentsOf: $0) } }
+        number(UInt32(pcm.count + 36)); data.append(Data("WAVEfmt ".utf8)); number(UInt32(16))
+        number(UInt16(1)); number(UInt16(1)); number(UInt32(16000)); number(UInt32(32000))
+        number(UInt16(2)); number(UInt16(16)); data.append(Data("data".utf8)); number(UInt32(pcm.count)); data.append(pcm)
+        return data
     }
 }

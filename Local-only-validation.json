@@ -1,0 +1,44 @@
+{
+  "version": "0.3.6",
+  "tests": {
+    "passed": 14,
+    "failures": 0
+  },
+  "ui": {
+    "reviewed": true,
+    "screenshot": "settings-local.png",
+    "localModelsOnly": true
+  },
+  "recognition": {
+    "models": [
+      {
+        "model": "Qwen3-ASR 1.7B · Q8",
+        "seconds": 18.085139989852905,
+        "text": "你好，这是语音识别测试。Hello, A T I test."
+      }
+    ],
+    "noAPIRequests": true,
+    "noMicrophone": true,
+    "noTextInjection": true,
+    "success": true
+  },
+  "sourceChecks": {
+    "cloudAndPolishingRemoved": true,
+    "noKeychainCalls": true,
+    "networkUsedOnlyForModelDownloads": true
+  },
+  "signing": {
+    "adhoc": true,
+    "stagedBundleStrictVerificationPassed": true,
+    "notarized": false
+  },
+  "notChecked": [
+    "Live microphone and automatic input in user applications",
+    "VibeVoice and Whisper inference (weights not installed; Whisper arguments and executable tested)"
+  ],
+  "upgrade": {
+    "existingLocalModelSelectionRetained": true,
+    "legacyCloudAndPolishSettingsIgnored": true,
+    "existingKeychainItemsUntouched": true
+  }
+}

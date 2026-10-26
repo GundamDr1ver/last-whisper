@@ -2,25 +2,6 @@ import Foundation
 import Combine
 import CryptoKit
 
-enum RecognitionMode: String, CaseIterable, Codable {
-    case local, cloud
-    var title: String { self == .local ? "本地模型" : "云端模型" }
-}
-struct CloudModel: Identifiable, Codable, Equatable, Sendable {
-    var id: String
-    var title: String
-    var endpoint: String
-    var model: String
-    var keyAccount: String { "asr-" + id }
-    static let qwen = Self(id: "qwen", title: "Qwen ASR", endpoint: "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions", model: "qwen3-asr-flash")
-    static let mimo = Self(id: "mimo", title: "MiMo ASR", endpoint: "https://api.xiaomimimo.com/v1/chat/completions", model: "mimo-v2.5-asr")
-    static var presets: [Self] { [.qwen, .mimo] }
-    func validatedURL() throws -> URL {
-        guard let url = URL(string: endpoint.trimmingCharacters(in: .whitespacesAndNewlines)), url.scheme == "https", let host = url.host, !host.isEmpty,
-              url.user == nil, url.password == nil, url.fragment == nil, url.query == nil, !model.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw Failure("请填写有效的 HTTPS 接口地址和模型名称。") }
-        return url
-    }
-}
 enum LocalModel: String, CaseIterable, Codable {
     case qwen, vibevoice, whisper
     var title: String {
@@ -85,27 +66,12 @@ enum LocalModel: String, CaseIterable, Codable {
 }
 
 struct RecognitionSettings: Equatable, Sendable {
-    var mode: RecognitionMode = .local
     var local: LocalModel = .qwen
-    var cloudID = "qwen"
-    var cloudModels = CloudModel.presets
-    var cloud: CloudModel { cloudModels.first(where: { $0.id == cloudID }) ?? .qwen }
     static func load(_ defaults: UserDefaults = .standard) -> Self {
-        var settings = Self()
-        settings.mode = RecognitionMode(rawValue: defaults.string(forKey: "recognitionMode") ?? "") ?? .local
-        settings.local = LocalModel(rawValue: defaults.string(forKey: "localModel") ?? "") ?? .qwen
-        if let data = defaults.data(forKey: "cloudModels"), let models = try? JSONDecoder().decode([CloudModel].self, from: data), !models.isEmpty {
-            settings.cloudModels = models
-        }
-        settings.cloudID = defaults.string(forKey: "cloudModelID") ?? defaults.string(forKey: "cloudProvider") ?? "qwen"
-        if !settings.cloudModels.contains(where: { $0.id == settings.cloudID }) { settings.cloudID = settings.cloudModels[0].id }
-        return settings
+        Self(local: LocalModel(rawValue: defaults.string(forKey: "localModel") ?? "") ?? .qwen)
     }
     func save(_ defaults: UserDefaults = .standard) {
-        defaults.set(mode.rawValue, forKey: "recognitionMode")
         defaults.set(local.rawValue, forKey: "localModel")
-        defaults.set(cloudID, forKey: "cloudModelID")
-        defaults.set(try? JSONEncoder().encode(cloudModels), forKey: "cloudModels")
         NotificationCenter.default.post(name: .recognitionSettingsChanged, object: nil)
     }
 }

@@ -43,11 +43,6 @@ final class DictationDelivery {
             MainActor.assumeIsolated { self?.changed = true }
         }
     }
-    var polishingContext: PolishContext {
-        guard !changed, !IsSecureEventInputEnabled(), let target,
-              NSWorkspace.shared.frontmostApplication?.processIdentifier == target.processIdentifier else { return .init() }
-        return .init(style: .detect(bundleID: target.bundleIdentifier), precedingText: PolishContext.beforeCaret(value: value, selection: selection))
-    }
     private func observe(_ event: NSEvent) {
         guard event.cgEvent?.getIntegerValueField(.eventSourceUserData) != eventTag else { return }
         if event.type == .keyDown && [UInt16(kVK_F13), UInt16(kVK_F5)].contains(event.keyCode) { return }
