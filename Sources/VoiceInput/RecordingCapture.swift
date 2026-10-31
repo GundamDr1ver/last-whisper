@@ -58,12 +58,13 @@ enum AudioSamples {
 }
 
 enum RecordingRecognition {
-    static func transcribe(_ samples: [Float], settings: RecognitionSettings) async throws -> String {
+    static func transcribe(_ samples: [Float], settings: RecognitionSettings, key: String = "", session: URLSession = .shared) async throws -> String {
         let decision = try await SpeechGate.shared.analyze(samples)
         guard let first = decision.ranges.first, let last = decision.ranges.last else { return "" }
         let speech = Array(samples[first.lowerBound..<last.upperBound])
         try Task.checkCancellation()
-        return try await LocalRecognition.shared.transcribe(speech, choice: settings.local)
+        if settings.mode == .local { return try await LocalRecognition.shared.transcribe(speech, choice: settings.local) }
+        return try await CloudRecognition.transcribe(speech, model: settings.cloud, key: key, session: session)
     }
 }
 

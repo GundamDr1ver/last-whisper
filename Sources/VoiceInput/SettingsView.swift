@@ -1,28 +1,97 @@
 import SwiftUI
 import AppKit
 
+private actor KeychainWrites {
+    static let shared = KeychainWrites()
+    func save(_ value: String, account: String, writer: @Sendable (String, String) -> Bool) -> Bool { writer(value, account) }
+}
+
 @MainActor final class SettingsDraft: ObservableObject {
     @Published var selection = RecognitionSettings.load()
+    @Published var keys: [String: String] = [:]
     @Published var status = ""
-    @Published private(set) var savedSelection = RecognitionSettings.load()
-    var dirty: Bool { selection != savedSelection }
+    @Published var testing = false
+    @Published private(set) var savingKeys: Set<String> = []
+    @Published private(set) var savedFingerprint: [String] = []
+    private let writeKey: @Sendable (String, String) -> Bool
+    init(writeKey: @escaping @Sendable (String, String) -> Bool = { Keychain.save($0, account: $1) }) { self.writeKey = writeKey }
+    private var keyTasks: [String: Task<Void, Never>] = [:]
+    private var loading = false
+    var fingerprint: [String] { [selection.mode.rawValue, selection.local.rawValue, selection.cloudID] + selection.cloudModels.flatMap { [$0.id, $0.title, $0.endpoint, $0.model] } }
+    var dirty: Bool { loading && fingerprint != savedFingerprint }
     func load(defaults: UserDefaults = .standard) {
+        guard !loading else { return }; loading = true
         selection = .load(defaults)
-        savedSelection = selection
+        savedFingerprint = fingerprint
+    }
+    func loadKey(readKey: @escaping @Sendable (String) -> String = { Keychain.read(account: $0) }) async {
+        guard selection.mode == .cloud else { return }
+        let account = selection.cloud.keyAccount
+        guard keys[account] == nil else { return }
+        let value = await Task.detached { readKey(account) }.value
+        if keys[account] == nil { keys[account] = value }
+    }
+    func keyBinding(_ account: String) -> Binding<String> {
+        Binding(get: { self.keys[account] ?? "" }, set: { self.editKey($0, account: account) })
+    }
+    func editKey(_ value: String, account: String) {
+        keys[account] = value
+        keyTasks[account]?.cancel()
+        let value = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.isEmpty else { savingKeys.remove(account); status = "密钥尚未填写；已存密钥不会因清空输入框而删除。"; return }
+        savingKeys.insert(account)
+        keyTasks[account] = Task {
+            do { try await Task.sleep(for: .milliseconds(650)); try Task.checkCancellation() } catch { return }
+            let ok = await KeychainWrites.shared.save(value, account: account, writer: writeKey)
+            guard self.keys[account]?.trimmingCharacters(in: .whitespacesAndNewlines) == value else { return }
+            self.savingKeys.remove(account)
+            self.status = ok ? "密钥已自动保存。" : "密钥保存失败，请允许系统钥匙串访问后重新输入。"
+        }
     }
     func save(defaults: UserDefaults = .standard) {
+        if selection.mode == .cloud, (keys[selection.cloud.keyAccount] ?? "").isEmpty { status = "请先填写所选服务商的密钥。"; return }
+        if selection.mode == .cloud {
+            do { _ = try selection.cloud.validatedURL() } catch { status = error.localizedDescription; return }
+        }
         selection.save(defaults)
-        savedSelection = selection
-        status = "设置已保存，下次录音生效。"
+        savedFingerprint = fingerprint; status = "设置已保存，下次录音生效。"
     }
+    func cloudBinding(_ field: WritableKeyPath<CloudModel, String>) -> Binding<String> {
+        Binding(get: { self.selection.cloud[keyPath: field] }, set: { value in
+            guard let index = self.selection.cloudModels.firstIndex(where: { $0.id == self.selection.cloudID }) else { return }
+            self.selection.cloudModels[index][keyPath: field] = value
+        })
+    }
+    func addCloudModel() {
+        let model = CloudModel(id: UUID().uuidString, title: "自定义模型", endpoint: "", model: "")
+        selection.cloudModels.append(model); selection.cloudID = model.id
+    }
+    var canRemoveCloudModel: Bool { !CloudModel.presets.contains(where: { $0.id == selection.cloudID }) }
+    func removeCloudModel() {
+        guard canRemoveCloudModel else { return }
+        selection.cloudModels.removeAll { $0.id == selection.cloudID }
+        selection.cloudID = selection.cloudModels.first?.id ?? CloudModel.qwen.id
+    }
+    func test() async {
+        guard !testing else { return }; testing = true; status = "正在测试…"
+        defer { testing = false }
+        do {
+            guard let file = Bundle.module.url(forResource: "api-test", withExtension: "wav", subdirectory: "Resources") else { throw Failure("测试音频缺失。") }
+            let output = try await CloudRecognition.transcribe(AudioSamples.load(file), model: selection.cloud, key: keys[selection.cloud.keyAccount] ?? "")
+            status = "API 通过：" + String(output.prefix(110))
+        } catch { status = "测试失败：" + error.localizedDescription }
+    }
+
 }
 
 struct SettingsView: View {
+    @ObservedObject var model: DictationModel
     @StateObject private var draft = SettingsDraft()
     @ObservedObject private var downloads = ModelDownloads.shared
     @State private var trusted = AXIsProcessTrusted()
     private let preview: Bool
-    @MainActor init(draft: SettingsDraft? = nil, preview: Bool = false) {
+    @MainActor init(model: DictationModel, draft: SettingsDraft? = nil, preview: Bool = false) {
+        self.model = model
         _draft = StateObject(wrappedValue: draft ?? SettingsDraft()); self.preview = preview
     }
     var body: some View {
@@ -37,20 +106,28 @@ struct SettingsView: View {
                 }.disabled(trusted)
                 Button("系统设置") { NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!) }
             }.font(.caption).frame(height: 30)
-            GroupBox("模型选择") {
-                ScrollView { localOptions.padding(8) }
-                    .scrollIndicators(.automatic)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            Picker("模型选择", selection: $draft.selection.mode) {
+                ForEach(RecognitionMode.allCases, id: \.self) { Text($0.title).tag($0) }
+            }
+            GroupBox {
+                Group {
+                    if draft.selection.mode == .local { ScrollView { localOptions }.scrollIndicators(.automatic) }
+                    else { cloudOptions }
+                }.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading).padding(8)
             }.frame(height: 200)
+            Text("输入密钥会自动保存/更新至系统钥匙串").font(.caption).foregroundStyle(.secondary)
+                .opacity(draft.selection.mode == .cloud ? 1 : 0).accessibilityHidden(draft.selection.mode != .cloud)
             HStack {
+                if draft.testing { ProgressView().controlSize(.small) }
                 Spacer()
-                Button("保存设置") { draft.save() }.buttonStyle(.borderedProminent).disabled(!draft.dirty).keyboardShortcut(.defaultAction)
+                Button("保存设置") { draft.save() }.buttonStyle(.borderedProminent).disabled(!draft.dirty || draft.testing || !draft.savingKeys.isEmpty).keyboardShortcut(.defaultAction)
             }
             Text(draft.status)
                 .font(.caption).foregroundStyle(draft.status.contains("失败") ? Color.orange : Color.secondary).lineLimit(3).frame(height: 44, alignment: .topLeading)
         }
         .textFieldStyle(.roundedBorder)
         .task { if !preview { draft.load() } }
+        .task(id: draft.selection.mode.rawValue + draft.selection.cloudID) { if !preview { await draft.loadKey() } }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in trusted = AXIsProcessTrusted() }
     }
     private var localOptions: some View {
@@ -59,23 +136,45 @@ struct SettingsView: View {
                 HStack(spacing: 10) {
                     Button { draft.selection.local = model } label: {
                         Image(systemName: draft.selection.local == model ? "largecircle.fill.circle" : "circle")
-                    }.buttonStyle(.plain).disabled(!model.installed).accessibilityLabel("选择 " + model.title)
+                    }.buttonStyle(.plain).disabled(!model.installed || downloads.removing.contains(model)).accessibilityLabel("选择 " + model.title)
                     VStack(alignment: .leading, spacing: 3) {
                         Text(model.title).font(.callout)
                         Text(downloads.messages[model] ?? model.detail).font(.caption).foregroundStyle(.secondary).lineLimit(2)
                     }
                     Spacer(minLength: 0)
-                    if let progress = downloads.progress[model] {
+                    if downloads.removing.contains(model) {
+                        ProgressView().controlSize(.small)
+                    } else if let progress = downloads.progress[model] {
                         CircularDownloadProgress(value: progress)
                         Button("取消") { downloads.cancel(model) }.font(.caption)
                     } else if model.installed {
-                        Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
+                        Button("删除", role: .destructive) { Task { guard self.model.phase == .idle else { return }; await downloads.remove(model) } }
+                            .disabled(self.model.phase != .idle)
+                            .accessibilityLabel("删除 " + model.title)
                     } else {
                         Button(downloads.messages[model]?.hasPrefix("下载失败") == true ? "重试" : "下载") { downloads.download(model) }
                     }
                 }.frame(height: 44)
             }
 
+        }
+    }
+    private var cloudOptions: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Picker("预设", selection: $draft.selection.cloudID) {
+                    ForEach(draft.selection.cloudModels) { Text($0.title).tag($0.id) }
+                }
+                Button("添加") { draft.addCloudModel() }
+                if draft.canRemoveCloudModel { Button("删除", role: .destructive) { draft.removeCloudModel() }.disabled(draft.testing) }
+            }
+            TextField("名称", text: draft.cloudBinding(\.title))
+            TextField("接口地址", text: draft.cloudBinding(\.endpoint))
+            HStack {
+                TextField("模型名称", text: draft.cloudBinding(\.model))
+                SecureField("API 密钥", text: draft.keyBinding(draft.selection.cloud.keyAccount))
+            }
+            Button("测试识别 API") { Task { await draft.test() } }.disabled(draft.testing)
         }
     }
 

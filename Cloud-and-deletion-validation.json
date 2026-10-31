@@ -1,0 +1,21 @@
+{
+  "version": "0.3.7",
+  "testsPassed": 20,
+  "testFailures": 0,
+  "localAndCloudSettingsVisuallyChecked": true,
+  "packagedSignatureStrictVerification": true,
+  "onlinePolishing": false,
+  "signing": "ad hoc, not notarized",
+  "notChecked": [
+    "Live paid API",
+    "Live microphone and text insertion"
+  ],
+  "checks": [
+    "Cloud requests and responses with mock HTTP",
+    "Silence does not upload",
+    "Separate key updates with in-memory keys",
+    "Custom model persistence and removal",
+    "Model deletion using isolated temporary fixtures",
+    "Deletion failure feedback and persistent auto-download suppression"
+  ]
+}

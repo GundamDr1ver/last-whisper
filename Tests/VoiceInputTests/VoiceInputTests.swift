@@ -90,7 +90,7 @@ final class RecordingTests: XCTestCase {
 }
 
 final class SettingsAndDownloadTests: XCTestCase {
-    @MainActor func testLocalSelectionIgnoresLegacyCloudSettingsAndSaveState() throws {
+    @MainActor func testUpgradeKeepsLocalUntilCloudIsExplicitlySaved() throws {
         let name = UUID().uuidString
         let defaults = try XCTUnwrap(UserDefaults(suiteName: name))
         defer { defaults.removePersistentDomain(forName: name) }
@@ -100,7 +100,7 @@ final class SettingsAndDownloadTests: XCTestCase {
         defaults.set("whisper", forKey: "localModel")
         let draft = SettingsDraft()
         draft.load(defaults: defaults)
-        XCTAssertEqual(draft.selection, RecognitionSettings(local: .whisper))
+        XCTAssertEqual(draft.selection, RecognitionSettings(local: .whisper, cloudID: "mimo"))
         XCTAssertFalse(draft.dirty)
         draft.selection.local = .qwen
         XCTAssertTrue(draft.dirty)
@@ -109,7 +109,7 @@ final class SettingsAndDownloadTests: XCTestCase {
         draft.selection.local = .vibevoice
         draft.save(defaults: defaults)
         XCTAssertFalse(draft.dirty)
-        XCTAssertEqual(RecognitionSettings.load(defaults), RecognitionSettings(local: .vibevoice))
+        XCTAssertEqual(RecognitionSettings.load(defaults), RecognitionSettings(local: .vibevoice, cloudID: "mimo"))
         XCTAssertTrue(defaults.bool(forKey: "batchPolishEnabled")) // Legacy settings are ignored, not destroyed.
     }
     func testWhisperWaveEncodingPreservesPCMAndHeader() {

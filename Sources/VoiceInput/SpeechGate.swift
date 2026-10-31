@@ -53,7 +53,7 @@ actor SpeechGate {
     func prepare() throws {
         guard model == nil else { return }
         guard let url = Bundle.module.url(forResource: "silero_vad", withExtension: "mlmodelc", subdirectory: "Resources") else {
-            throw Failure("人声检测模型缺失，本次不会调用识别或润色服务。")
+            throw Failure("人声检测模型缺失，本次不会调用识别服务。")
         }
         let config = MLModelConfiguration()
         config.computeUnits = .cpuOnly
@@ -86,7 +86,7 @@ actor SpeechGate {
             guard let probability = output.featureValue(for: "vad_output")?.multiArrayValue,
                   let nextH = output.featureValue(for: "new_hidden_state")?.multiArrayValue,
                   let nextC = output.featureValue(for: "new_cell_state")?.multiArrayValue else {
-                throw Failure("人声检测失败，本次不会调用识别或润色服务。")
+                throw Failure("人声检测失败，本次不会调用识别服务。")
             }
             hidden = nextH; cell = nextC
             probabilities.append(probability[0].floatValue)

@@ -39,6 +39,10 @@ actor LocalRecognition {
         audiocpp_model_free(model); model = nil
         audiocpp_registry_free(registry); registry = nil; selected = nil
     }
+    func remove(_ choice: LocalModel, directory: URL = LocalModel.root) throws {
+        if selected == choice { unload() }
+        try FileManager.default.removeItem(at: directory.appendingPathComponent(choice.file))
+    }
     func transcribe(_ samples: [Float], choice: LocalModel) throws -> String {
         try Task.checkCancellation()
         try prepare(choice)

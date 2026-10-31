@@ -2,6 +2,25 @@ import Foundation
 import Combine
 import CryptoKit
 
+enum RecognitionMode: String, CaseIterable, Codable {
+    case local, cloud
+    var title: String { self == .local ? "本地模型" : "云端模型" }
+}
+struct CloudModel: Identifiable, Codable, Equatable, Sendable {
+    var id: String
+    var title: String
+    var endpoint: String
+    var model: String
+    var keyAccount: String { "asr-" + id }
+    static let qwen = Self(id: "qwen", title: "Qwen ASR", endpoint: "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions", model: "qwen3-asr-flash")
+    static let mimo = Self(id: "mimo", title: "MiMo ASR", endpoint: "https://api.xiaomimimo.com/v1/chat/completions", model: "mimo-v2.5-asr")
+    static var presets: [Self] { [.qwen, .mimo] }
+    func validatedURL() throws -> URL {
+        guard let url = URL(string: endpoint.trimmingCharacters(in: .whitespacesAndNewlines)), url.scheme == "https", let host = url.host, !host.isEmpty,
+              url.user == nil, url.password == nil, url.fragment == nil, url.query == nil, !model.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw Failure("请填写有效的 HTTPS 接口地址和模型名称。") }
+        return url
+    }
+}
 enum LocalModel: String, CaseIterable, Codable {
     case qwen, vibevoice, whisper
     var title: String {
@@ -53,6 +72,7 @@ enum LocalModel: String, CaseIterable, Codable {
         return FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("VoiceInput/Models")
     }
     var url: URL { Self.root.appendingPathComponent(file) }
+    var autoDownloadDisabled: Bool { UserDefaults.standard.bool(forKey: "modelDeleted-" + rawValue) }
     var installed: Bool { (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize).map { Int64($0) == bytes } == true }
     func validate(_ url: URL) throws {
         let handle = try FileHandle(forReadingFrom: url)
@@ -66,12 +86,28 @@ enum LocalModel: String, CaseIterable, Codable {
 }
 
 struct RecognitionSettings: Equatable, Sendable {
+    var mode: RecognitionMode = .local
     var local: LocalModel = .qwen
+    var cloudID = "qwen"
+    var cloudModels = CloudModel.presets
+    var cloud: CloudModel { cloudModels.first(where: { $0.id == cloudID }) ?? .qwen }
     static func load(_ defaults: UserDefaults = .standard) -> Self {
-        Self(local: LocalModel(rawValue: defaults.string(forKey: "localModel") ?? "") ?? .qwen)
+        var settings = Self()
+        // Require a fresh choice: 0.3.6 ignored the old cloud mode.
+        settings.mode = RecognitionMode(rawValue: defaults.string(forKey: "recognitionModeV2") ?? "") ?? .local
+        settings.local = LocalModel(rawValue: defaults.string(forKey: "localModel") ?? "") ?? .qwen
+        if let data = defaults.data(forKey: "cloudModels"), let models = try? JSONDecoder().decode([CloudModel].self, from: data), !models.isEmpty {
+            settings.cloudModels = models
+        }
+        settings.cloudID = defaults.string(forKey: "cloudModelID") ?? defaults.string(forKey: "cloudProvider") ?? "qwen"
+        if !settings.cloudModels.contains(where: { $0.id == settings.cloudID }) { settings.cloudID = settings.cloudModels[0].id }
+        return settings
     }
     func save(_ defaults: UserDefaults = .standard) {
+        defaults.set(mode.rawValue, forKey: "recognitionModeV2")
         defaults.set(local.rawValue, forKey: "localModel")
+        defaults.set(cloudID, forKey: "cloudModelID")
+        defaults.set(try? JSONEncoder().encode(cloudModels), forKey: "cloudModels")
         NotificationCenter.default.post(name: .recognitionSettingsChanged, object: nil)
     }
 }
@@ -132,9 +168,10 @@ final class ModelFileTransfer: NSObject, URLSessionDownloadDelegate, @unchecked 
     @Published private(set) var progress: [LocalModel: Double] = [:]
     @Published private(set) var messages: [LocalModel: String] = [:]
     @Published private(set) var revision = 0
+    @Published private(set) var removing: Set<LocalModel> = []
     private var tasks: [LocalModel: Task<Void, Never>] = [:]
     func download(_ model: LocalModel) {
-        guard tasks[model] == nil, !model.installed else { return }
+        guard tasks[model] == nil, !removing.contains(model), !model.installed else { return }
         progress[model] = 0; messages[model] = "正在连接…"
         tasks[model] = Task {
             defer { tasks[model] = nil; progress[model] = nil; revision += 1 }
@@ -158,6 +195,7 @@ final class ModelFileTransfer: NSObject, URLSessionDownloadDelegate, @unchecked 
                 try FileManager.default.createDirectory(at: LocalModel.root, withIntermediateDirectories: true)
                 if FileManager.default.fileExists(atPath: model.url.path) { try FileManager.default.removeItem(at: model.url) }
                 try FileManager.default.moveItem(at: temp, to: model.url)
+                UserDefaults.standard.removeObject(forKey: "modelDeleted-" + model.rawValue)
                 messages[model] = "已下载并校验"
                 NotificationCenter.default.post(name: .recognitionSettingsChanged, object: nil)
             } catch {
@@ -185,6 +223,17 @@ final class ModelFileTransfer: NSObject, URLSessionDownloadDelegate, @unchecked 
             try await Task.sleep(for: .seconds(attempt + 1))
         }
         throw Failure("模型下载失败，请检查网络后重试。")
+    }
+    func remove(_ model: LocalModel, directory: URL = LocalModel.root, defaults: UserDefaults = .standard) async {
+        guard tasks[model] == nil, !removing.contains(model) else { return }
+        removing.insert(model)
+        defer { removing.remove(model); revision += 1 }
+        do {
+            try await LocalRecognition.shared.remove(model, directory: directory)
+            defaults.set(true, forKey: "modelDeleted-" + model.rawValue)
+            messages[model] = "已删除，可重新下载"
+            NotificationCenter.default.post(name: .recognitionSettingsChanged, object: nil)
+        } catch { messages[model] = "删除失败：" + error.localizedDescription }
     }
     func cancel(_ model: LocalModel) { tasks[model]?.cancel() }
 }

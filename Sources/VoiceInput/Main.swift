@@ -8,7 +8,7 @@ import Combine
 struct VoiceInputApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var delegate
     var body: some Scene {
-        Settings { SettingsView().frame(width: 560, height: 400).padding(24) }.defaultLaunchBehavior(.suppressed)
+        Settings { SettingsView(model: delegate.model).frame(width: 560, height: 440).padding(24) }.defaultLaunchBehavior(.suppressed)
         MenuBarExtra {
             StatusMenu(model: delegate.model)
         } label: {
@@ -102,10 +102,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
     private func renderSettingsPreview() {
         let directory = ProcessInfo.processInfo.environment["VOICEINPUT_UI_REPORT"] ?? "/private/tmp"
-        do {
+        for mode in RecognitionMode.allCases {
             let draft = SettingsDraft()
-            let view = NSHostingView(rootView: SettingsView(draft: draft, preview: true).frame(width: 560, height: 400).padding(24).background(Color(nsColor: .windowBackgroundColor)))
-            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 608, height: 448), styleMask: [.titled], backing: .buffered, defer: false)
+            draft.selection.mode = mode
+            let view = NSHostingView(rootView: SettingsView(model: model, draft: draft, preview: true).frame(width: 560, height: 440).padding(24).background(Color(nsColor: .windowBackgroundColor)))
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 608, height: 488), styleMask: [.titled], backing: .buffered, defer: false)
             window.contentView = view
             window.orderFront(nil)
             view.layoutSubtreeIfNeeded()
@@ -114,7 +115,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             if let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds) {
                 view.cacheDisplay(in: view.bounds, to: bitmap)
                 if let data = bitmap.representation(using: .png, properties: [:]) {
-                    try? data.write(to: URL(fileURLWithPath: directory).appendingPathComponent("settings-local.png"))
+                    try? data.write(to: URL(fileURLWithPath: directory).appendingPathComponent("settings-" + mode.rawValue + ".png"))
                 }
             }
         }
@@ -247,7 +248,8 @@ final class DictationModel: ObservableObject {
             guard AXIsProcessTrusted() else { throw Failure("请先授予辅助功能权限。") }
             guard !IsSecureEventInputEnabled(), let front = NSWorkspace.shared.frontmostApplication,
                   front.processIdentifier != ProcessInfo.processInfo.processIdentifier else { throw Failure("请先点击目标文字框，再按 F13。") }
-            if !settings.local.installed { throw Failure("请先在设置中完成模型下载。") }
+            if settings.mode == .local, ModelDownloads.shared.removing.contains(settings.local) { throw Failure("模型正在删除，请稍后重试。") }
+            if settings.mode == .local, !settings.local.installed { throw Failure("请先在设置中完成模型下载。") }
             let engine = preparedEngine ?? AVAudioEngine(); preparedEngine = engine
             let input = engine.inputNode; let format = input.outputFormat(forBus: 0)
             guard format.sampleRate > 0, format.channelCount > 0 else { throw Failure("没有可用的麦克风。") }
@@ -296,8 +298,14 @@ final class DictationModel: ObservableObject {
     func prepareLocalModel() async {
         guard phase == .idle else { return }
         let settings = RecognitionSettings.load()
+        if settings.mode == .cloud {
+            await LocalRecognition.shared.unload()
+            if phase == .idle { message = "已就绪 · 按 F13 开始" }
+            return
+        }
+        guard !ModelDownloads.shared.removing.contains(settings.local) else { return }
         guard settings.local.installed else {
-            if settings.local == .qwen, ModelDownloads.shared.messages[.qwen] == nil { ModelDownloads.shared.download(.qwen) }
+            if settings.local == .qwen, !settings.local.autoDownloadDisabled, ModelDownloads.shared.messages[.qwen] == nil { ModelDownloads.shared.download(.qwen) }
             message = ModelDownloads.shared.messages[settings.local] ?? "请先完成模型下载。"; return
         }
         do {
@@ -315,7 +323,7 @@ final class DictationModel: ObservableObject {
         let timeout = Task { [weak self] in
             do { try await Task.sleep(for: .seconds(180)) } catch { return }
             guard let self, self.session == id, self.phase == .processing else { return }
-            self.failRecording(Failure("识别超时，请检查模型后重试。"))
+            self.failRecording(Failure("识别超时，请检查模型或网络后重试。"))
         }
         defer {
             timeout.cancel()
@@ -326,7 +334,8 @@ final class DictationModel: ObservableObject {
             message = "正在识别…"
             let task = Task.detached {
                 let samples = try AudioSamples.load(capture.url)
-                return try await RecordingRecognition.transcribe(samples, settings: choice)
+                let key = choice.mode == .cloud ? Keychain.read(account: choice.cloud.keyAccount) : ""
+                return try await RecordingRecognition.transcribe(samples, settings: choice, key: key)
             }
             recognitionTask = task
             let raw = try await task.value

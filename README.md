@@ -4,11 +4,17 @@ macOS 菜单栏语音输入。按 F13（F5 映射）开始录音，再按一次�
 
 ## 设置
 
-“模型选择”仅提供本地模型：Qwen3-ASR 1.7B Q8（2.47 GB）、VibeVoice 1.5B 和 Whisper Large v3 Turbo Q8（874 MB）。列表超出固定高度时可滚动；模型下载具有进度、校验、取消和重试。新安装默认选择并自动下载 Qwen3-ASR 1.7B Q8，其他两个模型仅在点击下载后安装，后台准备所选模型。
+“模型选择”可切换本地和云端，窗口与模型区域大小保持固定。不提供在线润色，识别结果直接输入。
 
-“保存设置”仅在模型选择发生修改时可用，保存成功后恢复不可用，下次录音生效。旧版本的本地模型选择继续保留；旧云端和润色设置不再读取，无论以前是否启用，都只使用本地模型。识别结果直接输入，不再额外润色、去口头禅或改写。
+本地提供 Qwen3-ASR 1.7B Q8（默认）、VibeVoice 1.5B 和 Whisper Large v3 Turbo Q8。下载支持进度、校验、取消和重试；已下载模型旁有“删除”按钮，删除前卸载，录音和识别期间不可删除。删除后可重新下载，手动删除默认千问后不会自动下载回来。本地模型选择继续保留，删除所选模型不会自动换模型，需重新下载或手动选择其他模型。
 
-不再提供云端识别、API 润色或密钥输入，也不再读写系统钥匙串。旧钥匙串条目保留，应用不会主动访问或删除；如不再需要，可在“钥匙串访问”中自行删除服务 `local.voiceinput.api` 的条目。网络仅用于主动下载模型或首次自动下载默认模型；录音及文字不上传。
+云端提供 Qwen ASR（`qwen3-asr-flash`）与 MiMo ASR（`mimo-v2.5-asr`），显示可编辑的完整接口地址与模型名，可添加、删除自定义模型。支持 OpenAI 兼容的音频 `/chat/completions` 和 `/audio/transcriptions` 接口；测试按钮发送固定测试音频并显示结果，可能产生服务商费用。录音结束且检测到人声后才上传一次录音，不调用文字润色服务。
+
+预设接口：千问 `https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions`，MiMo `https://api.xiaomimimo.com/v1/chat/completions`。千问支持将旧域名替换为业务空间专属域名，详见[千问官方文档](https://help.aliyun.com/zh/model-studio/qwen-asr-api-reference)；MiMo 参数见[官方文档](https://mimo.mi.com/docs/zh-CN/api/audio/Speech-Recognition)。
+
+密钥输入后自动保存/更新至系统钥匙串服务 `local.voiceinput.api`，各模型分别保存，兼容原有 `asr-qwen`、`asr-mimo`、自定义 `asr-UUID` 账号。仅云端模式读取对应密钥，清空输入框不删除原密钥；删除自定义模型也保留钥匙串条目。旧润色设置和 `polish-key` 不读取。升级后默认保持本地，需主动选择云端并保存，才会上传录音。
+
+“保存设置”仅在配置修改时可用，成功后恢复不可用，下次录音生效；密钥单独自动保存。
 
 ## 录音和输入
 
