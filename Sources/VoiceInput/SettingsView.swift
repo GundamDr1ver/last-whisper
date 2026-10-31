@@ -97,7 +97,7 @@ struct SettingsView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("speakeasy 设置").font(.title2.bold())
-            Text("按 F13 开始，再按一次停止并输入。").font(.caption).foregroundStyle(.secondary)
+            Text("短按 F13 开始／停止输入，长按取消；点击悬浮条也可取消。").font(.caption).foregroundStyle(.secondary)
             HStack {
                 Label(trusted ? "自动输入权限已授权" : "请授予自动输入权限", systemImage: trusted ? "checkmark.shield" : "exclamationmark.shield")
                 Spacer()

@@ -1,0 +1,5 @@
+module NativeText [system] {
+    header "wetext_processor_c_api.h"
+    link "wetext_processor_c"
+    export *
+}

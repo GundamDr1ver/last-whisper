@@ -3,6 +3,7 @@ set -euo pipefail
 cd "${0:A:h:h}"
 [[ -f .native/libaudiocpp.dylib ]] || ./Scripts/build-native.sh
 [[ -x .native/whisper-cli ]] || ./Scripts/build-whisper.sh
+[[ -f .native/libwetext_processor_c.dylib ]] || ./Scripts/build-text-normalizer.sh
 BUILD_DIR="${TMPDIR:-/private/tmp}/voiceinput-swift-build"
 export CLANG_MODULE_CACHE_PATH="$BUILD_DIR/clang-cache"
 export SWIFTPM_MODULECACHE_OVERRIDE="$BUILD_DIR/module-cache"
@@ -42,8 +43,8 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
 <key>CFBundleDisplayName</key><string>speakeasy</string>
 <key>CFBundleIconFile</key><string>AppIcon</string>
 <key>CFBundlePackageType</key><string>APPL</string>
-<key>CFBundleShortVersionString</key><string>0.3.7</string>
-<key>CFBundleVersion</key><string>11</string>
+<key>CFBundleShortVersionString</key><string>0.3.9</string>
+<key>CFBundleVersion</key><string>13</string>
 <key>LSUIElement</key><true/>
 <key>LSMinimumSystemVersion</key><string>15.0</string>
 <key>NSMicrophoneUsageDescription</key><string>录制你的语音并转换为输入文字。</string>

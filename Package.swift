@@ -8,7 +8,8 @@ let package = Package(
     products: [.executable(name: "VoiceInput", targets: ["VoiceInput"])],
     targets: [
         .systemLibrary(name: "NativeAudio", path: "NativeAudio"),
-        .executableTarget(name: "VoiceInput", dependencies: ["NativeAudio"], resources: [.copy("Resources")], swiftSettings: [.swiftLanguageMode(.v5)], linkerSettings: [.unsafeFlags(["-L", root + "/.native", "-Xlinker", "-rpath", "-Xlinker", root + "/.native"])]),
+        .systemLibrary(name: "NativeText", path: "NativeText"),
+        .executableTarget(name: "VoiceInput", dependencies: ["NativeAudio", "NativeText"], resources: [.copy("Resources")], swiftSettings: [.swiftLanguageMode(.v5)], linkerSettings: [.unsafeFlags(["-L", root + "/.native", "-Xlinker", "-rpath", "-Xlinker", root + "/.native"])]),
         .testTarget(name: "VoiceInputTests", dependencies: ["VoiceInput"])
     ]
 )

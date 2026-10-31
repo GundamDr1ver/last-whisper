@@ -59,6 +59,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             NSApp.terminate(nil)
             return
         }
+        if ProcessInfo.processInfo.arguments.contains("--normalization-smoke") {
+            Task {
+                var report: [String: Any]
+                do {
+                    let output = try await NumberNormalization.shared.normalize("版本零点三点八，价格零点零五元。")
+                    report = ["success": output == "版本0.3.8，价格0.05元。", "text": output, "noAPIRequests": true, "noMicrophone": true]
+                } catch { report = ["success": false, "error": error.localizedDescription] }
+                let path = ProcessInfo.processInfo.environment["VOICEINPUT_NORMALIZATION_REPORT"] ?? "/private/tmp/speakeasy-normalization.json"
+                if let data = try? JSONSerialization.data(withJSONObject: report, options: [.prettyPrinted, .sortedKeys]) { try? data.write(to: URL(fileURLWithPath: path)) }
+                NSApp.terminate(nil)
+            }
+            return
+        }
         if ProcessInfo.processInfo.arguments.contains("--download-smoke") {
             Task { await runDownloadSmoke(); NSApp.terminate(nil) }
             return
@@ -68,6 +81,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             return
         }
         Task { try? await SpeechGate.shared.prepare() }
+        Task { try? await NumberNormalization.shared.prepare() }
         model.prepareMicrophoneHardware()
         Task { @MainActor in await model.prepareLocalModel() }
         NotificationCenter.default.addObserver(forName: .recognitionSettingsChanged, object: nil, queue: .main) { [weak self] _ in
@@ -119,11 +133,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 }
             }
         }
+        model.phase = .recording; model.audioLevel = 0.8
+        let indicator = NSHostingView(rootView: AudioActivityView(model: model))
+        let window = NSWindow(contentRect: NSRect(origin: .zero, size: AudioActivityView.size), styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isOpaque = false; window.backgroundColor = .clear
+        window.contentView = indicator; window.orderFront(nil)
+        indicator.layoutSubtreeIfNeeded(); window.displayIfNeeded()
+        RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+        if let bitmap = indicator.bitmapImageRepForCachingDisplay(in: indicator.bounds) {
+            indicator.cacheDisplay(in: indicator.bounds, to: bitmap)
+            if let data = bitmap.representation(using: .png, properties: [:]) {
+                try? data.write(to: URL(fileURLWithPath: directory).appendingPathComponent("recording-indicator.png"))
+            }
+        }
+        model.phase = .idle
     }
     private func updatePanel(_ phase: DictationModel.Phase) {
         dismissTask?.cancel()
         guard phase != .idle else {
             guard panel?.isVisible == true else { return }
+            if model.wasCancelled { panel?.orderOut(nil); return }
             dismissTask = Task { @MainActor [weak self] in
                 do { try await Task.sleep(for: .seconds(1.5)) } catch { return }
                 guard self?.model.phase == .idle else { return }
@@ -132,7 +161,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             return
         }
         if panel == nil {
-            let window = SubtitlePanel(contentRect: NSRect(x: 0, y: 0, width: 86, height: 32), styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+            let window = SubtitlePanel(contentRect: NSRect(x: 0, y: 0, width: AudioActivityView.size.width, height: AudioActivityView.size.height), styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
             window.isFloatingPanel = true
             window.level = .floating
             window.hidesOnDeactivate = false
@@ -140,7 +169,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             window.isOpaque = false
             window.backgroundColor = .clear
             window.hasShadow = false
-            window.isMovableByWindowBackground = true
+            window.isMovableByWindowBackground = false
             window.isReleasedWhenClosed = false
             window.contentView = NSHostingView(rootView: AudioActivityView(model: model))
             window.delegate = self
@@ -149,7 +178,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             if let saved, NSScreen.screens.contains(where: { $0.visibleFrame.contains(NSRect(origin: saved.origin, size: window.frame.size)) }) {
                 window.setFrameOrigin(saved.origin)
             } else if let frame = (NSScreen.screens.first(where: { NSMouseInRect(NSEvent.mouseLocation, $0.frame, false) }) ?? NSScreen.main)?.visibleFrame {
-                window.setFrameOrigin(NSPoint(x: frame.midX - 43, y: frame.minY + 70))
+                window.setFrameOrigin(NSPoint(x: frame.midX - AudioActivityView.size.width / 2, y: frame.minY + 70))
             }
         }
         if panel?.isVisible != true {
@@ -159,7 +188,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 if let saved, NSScreen.screens.contains(where: { $0.visibleFrame.contains(NSRect(origin: saved.origin, size: panel.frame.size)) }) {
                     panel.setFrameOrigin(saved.origin)
                 } else if let frame = screen?.visibleFrame {
-                    panel.setFrameOrigin(NSPoint(x: frame.midX - 43, y: frame.minY + 70))
+                    panel.setFrameOrigin(NSPoint(x: frame.midX - AudioActivityView.size.width / 2, y: frame.minY + 70))
                 }
             }
             // Show the preview without taking focus from the destination input field.
@@ -171,13 +200,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
     func registerHotKey() {
         guard hotKey == nil else { return }
-        var spec = EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed))
-        InstallEventHandler(GetApplicationEventTarget(), { _, _, context in
-            guard let context else { return OSStatus(eventNotHandledErr) }
-            let delegate = Unmanaged<AppDelegate>.fromOpaque(context).takeUnretainedValue()
-            Task { @MainActor in delegate.model.toggle() }
-            return noErr
-        }, 1, &spec, Unmanaged.passUnretained(self).toOpaque(), &handler)
+        var specs = [
+            EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed)),
+            EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyReleased))
+        ]
+        _ = specs.withUnsafeMutableBufferPointer { events in
+            InstallEventHandler(GetApplicationEventTarget(), { _, event, context in
+                guard let context else { return OSStatus(eventNotHandledErr) }
+                let delegate = Unmanaged<AppDelegate>.fromOpaque(context).takeUnretainedValue()
+                let kind = GetEventKind(event)
+                Task { @MainActor in
+                    if kind == UInt32(kEventHotKeyPressed) { delegate.model.hotKeyPressed() }
+                    else if kind == UInt32(kEventHotKeyReleased) { delegate.model.hotKeyReleased() }
+                }
+                return noErr
+            }, events.count, events.baseAddress, Unmanaged.passUnretained(self).toOpaque(), &handler)
+        }
         let result = RegisterEventHotKey(UInt32(kVK_F13), 0, EventHotKeyID(signature: 0x564F4943, id: 1), GetApplicationEventTarget(), 0, &hotKey)
         if result != noErr { model.message = "F13 已被占用，请通过菜单栏开始录音。" }
     }
@@ -223,16 +261,48 @@ final class DictationModel: ObservableObject {
     private var engine: AVAudioEngine?
     private var capture: RecordingCapture?
     private var recognitionTask: Task<String, Error>?
+    private var operationTask: Task<Void, Never>?
+    private var holdTask: Task<Void, Never>?
+    private var hotKey = DictationHotKey()
+    private(set) var wasCancelled = false
     private var settings = RecognitionSettings()
     private var session = UUID()
     var busy: Bool { phase == .preparing || phase == .processing }
     var recording: Bool { phase == .recording }
     func toggle() {
-        if phase == .recording { Task { await stop() } }
-        else if phase == .idle { Task { await start() } }
+        if phase == .recording { perform(.stop) }
+        else if phase == .idle { perform(.start) }
+    }
+    func hotKeyPressed() {
+        guard hotKey.pressedAt == nil else { return }
+        perform(hotKey.press(idle: phase == .idle, recording: recording, now: ProcessInfo.processInfo.systemUptime))
+        holdTask = Task { @MainActor [weak self] in
+            do { try await Task.sleep(for: .seconds(DictationHotKey.holdDuration)); try Task.checkCancellation() } catch { return }
+            guard let self else { return }
+            self.perform(self.hotKey.held(now: ProcessInfo.processInfo.systemUptime))
+        }
+    }
+    func hotKeyReleased() {
+        holdTask?.cancel(); holdTask = nil
+        perform(hotKey.release(now: ProcessInfo.processInfo.systemUptime))
+    }
+    private func perform(_ action: DictationHotKey.Action) {
+        switch action {
+        case .none: break
+        case .start: operationTask = Task { await start() }
+        case .stop: operationTask = Task { await stop() }
+        case .cancel: cancelRecording()
+        }
+    }
+    func cancelRecording() {
+        guard phase != .idle else { return }
+        text = ""; timingSummary = ""; wasCancelled = true
+        failRecording(CancellationError(), preserve: false)
+        needsAttention = false; message = "已取消，本次录音已丢弃。"
     }
     func start() async {
         guard phase == .idle else { return }
+        wasCancelled = false
         needsAttention = false; text = ""; timingSummary = ""
         message = "正在准备麦克风…"; phase = .preparing
         let requestedAt = ProcessInfo.processInfo.systemUptime
@@ -243,6 +313,7 @@ final class DictationModel: ObservableObject {
         case .notDetermined: microphone = await AVCaptureDevice.requestAccess(for: .audio)
         default: microphone = false
         }
+        guard session == id, phase == .preparing, !Task.isCancelled else { return }
         guard microphone else { message = "请允许麦克风权限。"; needsAttention = true; phase = .idle; return }
         do {
             guard AXIsProcessTrusted() else { throw Failure("请先授予辅助功能权限。") }
@@ -327,7 +398,7 @@ final class DictationModel: ObservableObject {
         }
         defer {
             timeout.cancel()
-            if session == id { recognitionTask = nil; cleanup(); delivery.end(); phase = .idle }
+            if session == id { recognitionTask = nil; operationTask = nil; cleanup(); delivery.end(); phase = .idle }
         }
         do {
             try delivery.capture()
@@ -340,11 +411,16 @@ final class DictationModel: ObservableObject {
             recognitionTask = task
             let raw = try await task.value
             guard session == id else { return }
-            text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            var warning: String?
+            do { text = try await NumberNormalization.shared.normalize(raw).trimmingCharacters(in: .whitespacesAndNewlines) }
+            catch is CancellationError { return }
+            catch { text = raw.trimmingCharacters(in: .whitespacesAndNewlines); warning = "数字转换不可用，已保留原始识别结果。" }
+            guard session == id else { return }
             guard !text.isEmpty else { message = "未检测到有效语音，未输入文字。"; return }
             try await delivery.deliver(text)
+            guard session == id else { return }
             timingSummary += String(format: " · 处理 %.2f 秒", Date().timeIntervalSince(started))
-            message = "已输入"
+            message = warning ?? "已输入"
         } catch {
             guard session == id else { return }
             recognitionTask?.cancel(); needsAttention = true; message = error.localizedDescription
@@ -360,9 +436,11 @@ final class DictationModel: ObservableObject {
         capture = nil
     }
     private func failRecording(_ error: Error, preserve: Bool = true) {
+        holdTask?.cancel(); holdTask = nil; hotKey.suppressRelease()
+        operationTask?.cancel(); operationTask = nil
         session = UUID(); recognitionTask?.cancel(); recognitionTask = nil
         if let engine { engine.stop(); engine.inputNode.removeTap(onBus: 0) }; engine = nil
-        startCue?.stop(); cleanup(); audioLevel = 0; needsAttention = true; message = error.localizedDescription
+        startCue?.stop(); stopCue?.stop(); cleanup(); audioLevel = 0; needsAttention = true; message = error.localizedDescription
         delivery.end(); phase = .idle; if preserve { preserveResult() }
     }
     func shutdown() { failRecording(CancellationError(), preserve: false) }
@@ -410,16 +488,31 @@ final class SubtitlePanel: NSPanel {
 }
 
 struct AudioActivityView: View {
+    static let size = NSSize(width: 104, height: 38)
     @ObservedObject var model: DictationModel
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 24, paused: model.phase == .idle)) { context in
-            HStack(spacing: 4) {
-                ForEach(0..<7) { index in
-                    let pulse = (sin(context.date.timeIntervalSinceReferenceDate * 7 + Double(index)) + 1) / 2
-                    Capsule().fill(model.recording ? Color.white : .orange).frame(width: 4, height: 4 + 18 * max(0.15, model.audioLevel) * pulse)
+        Button { model.cancelRecording() } label: {
+            TimelineView(.animation(minimumInterval: 1.0 / 24, paused: model.phase == .idle)) { context in
+                HStack(spacing: 10) {
+                    Image(systemName: "stop.circle").font(.system(size: 19, weight: .medium))
+                        .foregroundStyle(.white)
+                    HStack(spacing: 4) {
+                        ForEach(0..<7) { index in
+                            let pulse = (sin(context.date.timeIntervalSinceReferenceDate * 7 + Double(index)) + 1) / 2
+                            Capsule().fill(model.recording ? Color.white : .orange)
+                                .frame(width: 4, height: 4 + 21 * max(0.15, model.audioLevel) * pulse)
+                        }
+                    }
                 }
-            }.frame(width: 86, height: 32).background(.black.opacity(0.5), in: Capsule())
-        }.allowsHitTesting(false)
+                .frame(width: Self.size.width, height: Self.size.height)
+                .background(.black.opacity(0.5), in: Capsule())
+                .contentShape(Capsule())
+            }
+        }
+        .buttonStyle(.plain)
+        .disabled(model.phase == .idle)
+        .help("取消本次录音，也可长按 F13")
+        .accessibilityLabel("取消本次录音")
     }
 }
 
