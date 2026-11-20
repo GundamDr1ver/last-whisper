@@ -49,6 +49,53 @@ final class NumberNormalizationTests: XCTestCase {
             XCTAssertEqual(repeated, expected)
         }
     }
+    func testSpokenDigitRunsBecomeArabicInsideHanAndLatinText() async throws {
+        let normalizer = NumberNormalization()
+        for (source, expected) in [
+            ("出九零六零xt这种中端卡", "出9060xt这种中端卡"),
+            ("四零九零Ti显卡", "4090Ti显卡"),
+            ("三零六零和六八零零", "3060和6800"),
+            ("二零二四年", "2024年"),
+            ("给九零六零加内存", "给9060加内存"),
+            ("AMD比英伟达更先说出'all in ai', 出九零六零xt这种中端卡选择不竞争",
+             "AMD比英伟达更先说出'all in ai', 出9060xt这种中端卡选择不竞争")
+        ] {
+            let result = try await normalizer.normalize(source)
+            XCTAssertEqual(result, expected, source)
+            let repeated = try await normalizer.normalize(result)
+            XCTAssertEqual(repeated, expected, source)
+        }
+    }
+    func testIdiomsThatLookLikeDigitRunsStaySpoken() async throws {
+        let normalizer = NumberNormalization()
+        for source in ["七零八落", "五零四散", "零零星星", "三三两两", "一一对应", "七零八碎"] {
+            let result = try await normalizer.normalize(source)
+            XCTAssertEqual(result, source)
+        }
+    }
+    func testDecimalsKeepTrailingZerosWhenSpokenAsDigits() async throws {
+        let normalizer = NumberNormalization()
+        for (source, expected) in [
+            ("九点零六零", "9.060"), ("负九点零六", "-9.06"), ("零点零六", "0.06"), ("出九点零六零xt", "出9.060xt")
+        ] {
+            let result = try await normalizer.normalize(source)
+            XCTAssertEqual(result, expected, source)
+        }
+    }
+    func testSpelledLettersJoinWithoutDotsOrSpaces() async throws {
+        let normalizer = NumberNormalization()
+        for (source, expected) in [
+            ("A.M.D", "AMD"), ("出A.M.D和U.S.A.", "出AMD和USA"), ("A M D", "AMD"),
+            ("A.M.D比英伟达更先说出'all in ai'", "AMD比英伟达更先说出'all in ai'"),
+            ("A.I. 技术", "AI 技术"), ("版本0.3.8", "版本0.3.8"),
+            ("e.g. 和 i.e. 和 a.m.", "e.g. 和 i.e. 和 a.m.")
+        ] {
+            let result = try await normalizer.normalize(source)
+            XCTAssertEqual(result, expected, source)
+            let repeated = try await normalizer.normalize(result)
+            XCTAssertEqual(repeated, expected, source)
+        }
+    }
     func testCancellationIsNotReportedAsANormalizedResult() async throws {
         let task = Task {
             withUnsafeCurrentTask { $0?.cancel() }
