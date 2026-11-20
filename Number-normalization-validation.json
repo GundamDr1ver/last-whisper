@@ -1,18 +1,18 @@
 {
+  "finalNumberTests": 9,
   "noAPIRequests": true,
-  "noMicrophone": true,
-  "success": true,
-  "text": "版本0.3.8，价格0.05元。",
-  "version": "0.3.9",
-  "regressionTests": 33,
-  "finalNumberTests": 5,
-  "signing": "ad hoc; strict package verification passed",
   "noLiveMicrophoneTest": true,
+  "noMicrophone": true,
   "noRealAPIRequests": true,
   "publicationBundleCheck": {
     "noAPIRequests": true,
     "noMicrophone": true,
     "success": true,
     "text": "版本0.3.8，价格0.05元。"
-  }
+  },
+  "regressionTests": 37,
+  "signing": "ad hoc; strict package verification passed",
+  "success": true,
+  "text": "版本0.3.8，价格0.05元。",
+  "version": "0.3.10"
 }
